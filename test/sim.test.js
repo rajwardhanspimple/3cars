@@ -26,6 +26,7 @@ test('three different models and always-on traction and ABS',()=>{
  const r=new Race({weather:'wet'});r.phase='racing';for(let i=0;i<100;i++)r.drive(r.player,{throttle:1},1/120);
  assert.equal(r.player.tc,true);r.drive(r.player,{brake:1},.3);assert.equal(r.player.abs,true);
 });
+
 test('repair resets to the last validated gate without skipping or jumping forward',()=>{
  const start=new Race();start.phase='racing';const a=start.player;a.nextGate=0;assert.equal(start.repair(),true);assert.equal(a.damage.engine,0);assert.equal(a.penalty,PENALTIES.repair);assert.equal(a.nextGate,0);assert.equal(a.progress,-2);
  const later=new Race();later.phase='racing';const b=later.player;b.nextGate=8;assert.equal(later.repair(),true);assert.equal(b.nextGate,8);assert.equal(b.progress,(7*later.track.gateSize)+2);
@@ -49,12 +50,30 @@ test('classification uses time penalties after the field finishes',()=>{
 test('the race does not end early while competitors are still running',()=>{
  const r=new Race();r.phase='racing';r.player.finished=true;r.firstFinish=0;r.time=100;r.step(1/120);assert.equal(r.phase,'racing');
 });
-test('engine and tire damage reduce capability',()=>{
- const clean=new Race();clean.phase='racing';clean.drive(clean.player,{throttle:1},1/120);
- const engineDamaged=new Race();engineDamaged.phase='racing';engineDamaged.player.damage.engine=.8;engineDamaged.drive(engineDamaged.player,{throttle:1},1/120);
- const tireDamaged=new Race();tireDamaged.phase='racing';tireDamaged.player.damage.tires=.8;tireDamaged.drive(tireDamaged.player,{throttle:1},1/120);
+
+test('engine and tire damage reduce capability under identical surface conditions',()=>{
+ const setup=(race)=>{
+  race.phase='racing';
+  const p=race.track.at(50);
+  race.player.x=p.x;
+  race.player.z=p.z;
+  race.player.yaw=p.heading;
+  race.player.hint=p.index;
+  race.player.previousS=p.s;
+  race.player.progress=50;
+  race.player.vx=0;
+  race.player.vz=0;
+  race.player.speed=0;
+  return p;
+ };
+ const clean=new Race();setup(clean);clean.drive(clean.player,{throttle:1},1/120);
+ const engineDamaged=new Race();setup(engineDamaged);engineDamaged.player.damage.engine=.8;engineDamaged.drive(engineDamaged.player,{throttle:1},1/120);
+ const tireDamaged=new Race();setup(tireDamaged);tireDamaged.player.damage.tires=.8;tireDamaged.player.vx=12;tireDamaged.player.vz=0;tireDamaged.drive(tireDamaged.player,{steer:.5,throttle:1},1/120);
+ clean.player.vx=12;clean.player.vz=0;clean.player.speed=12;clean.player.steer=0;
+ clean.drive(clean.player,{steer:.5,throttle:1},1/120);
  assert.ok(engineDamaged.player.speed<clean.player.speed);
- assert.ok(tireDamaged.player.speed<clean.player.speed);
+ assert.ok(tireDamaged.player.slip>clean.player.slip);
+ assert.ok(Math.abs(tireDamaged.player.yawRate)<Math.abs(clean.player.yawRate));
 });
 test('competitive AI can finish a dry and wet five-lap race', {timeout:120000},()=>{
  for(const weather of ['dry','wet']){

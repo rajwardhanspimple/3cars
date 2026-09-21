@@ -31,7 +31,8 @@ jobs:
           node-version: '22'
       - run: npm install --ignore-scripts --no-audit --no-fund
       - run: npm run build
-      - run: npx playwright install --with-deps chromium
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium > /tmp/chromium-install.log 2>&1 || (tail -60 /tmp/chromium-install.log; exit 1)
       - run: npm run test:browser
       - uses: actions/upload-artifact@v4
         if: always()

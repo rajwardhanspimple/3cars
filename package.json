@@ -1,0 +1,17 @@
+{
+  "name": "3cars",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A desktop-browser GT racing game with three original cars and two AI rivals",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "node scripts/server.mjs",
+    "start": "node scripts/server.mjs",
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.js",
+    "test:browser": "playwright test"
+  },
+  "dependencies": { "babylonjs": "7.54.3" },
+  "devDependencies": { "@playwright/test": "1.56.1" }
+}

@@ -14,6 +14,7 @@ export const angle = n => mod(n + Math.PI, TAU) - Math.PI;
 const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (a, b, rate, dt) => lerp(a, b, 1 - Math.exp(-rate * dt));
 
+
 export function makeTrack() {
   const controls = [[-90,-130],[65,-130],[138,-104],[163,-45],[102,-6],[145,62],[92,128],[7,127],[-37,55],[-118,91],[-165,38],[-126,-18],[-151,-80]];
   const points = [];
@@ -40,7 +41,8 @@ export function makeTrack() {
     return {x:lerp(a.x,b.x,t)+Math.cos(heading)*offset,z:lerp(a.z,b.z,t)-Math.sin(heading)*offset,heading, s, index:lo};
   }
   function curvature(s) { return angle(at(s+5).heading-at(s-5).heading)/10; }
-  function project(x,z,hint) {
+  
+function project(x,z,hint) {
     let best=null;
     const scan = indices => {
       for (const i of indices) {
@@ -62,6 +64,7 @@ function createCar(model,index,track) {
     progress,previousS:p.s,hint:p.index,nextGate:0,lap:1,lapStart:null,lapTimes:[],lapValid:true,bestLap:null,finished:false,finishTime:null,penalty:0,damage:{engine:0,steering:0,tires:0},offTime:0,offStart:0,offPenalized:false,impact:0,impactCooldown:0,stuckTime:0,repairCooldown:0,notification:'',noticeUntil:0};
 }
 
+
 export class Race {
   constructor({carId='vortex',weather='dry'}={}) {
     this.track=makeTrack(); this.weather=weather==='wet'?'wet':'dry'; this.time=0; this.phase='menu'; this.countdown=3; this.firstFinish=null; this.pausedPhase=null;
@@ -74,13 +77,14 @@ export class Race {
   penalty(car,seconds,text) { car.penalty+=seconds;car.lapValid=false;this.tell(car,`${text} +${seconds}s`); }
   repair(car=this.player, kind='repair') {
     if(this.phase!=='racing'||car.finished||car.repairCooldown>0) return false;
-    const safe=(Math.max(0,car.nextGate-1))*this.track.gateSize-2;
+    const safe=car.nextGate===0?-2:(car.nextGate-1)*this.track.gateSize+2;
     const p=this.track.at(safe,car.index===0?0:2.8*(car.index===1?1:-1));
     car.x=p.x;car.z=p.z;car.yaw=p.heading;car.vx=0;car.vz=0;car.speed=0;car.steer=0;car.yawRate=0;car.progress=safe;car.previousS=p.s;car.hint=p.index;car.offTime=0;car.offPenalized=false;car.stuckTime=0;car.repairCooldown=3;
     if(kind==='repair') car.damage={engine:0,steering:0,tires:0};
     this.penalty(car,PENALTIES[kind],kind==='repair'?'Repaired and returned':'Skipped checkpoint'); return true;
   }
-  ai(car) {
+  
+ai(car) {
     const speed=Math.max(0,car.speed), look=8+speed*0.42;
     let lane=Math.sin(car.progress*0.009+car.index)*1.3;
     for(const other of this.cars) if(other!==car&&!other.finished) {
@@ -99,7 +103,8 @@ export class Race {
     if(Math.abs(error)>0.65) targetSpeed=Math.min(targetSpeed,13);
     return {throttle:clamp((targetSpeed-speed)*.7,0,1),brake:clamp((speed-targetSpeed)*.32,0,1),steer};
   }
-  step(dt,input={}) {
+  
+step(dt,input={}) {
     if(!Number.isFinite(dt)||dt<=0) return;
     dt=Math.min(dt,1/30);
     if(this.phase==='countdown') {this.countdown-=dt;if(this.countdown<=0)this.phase='racing';return;}
@@ -114,9 +119,9 @@ export class Race {
     }
     this.collisions();
     if(this.cars.every(c=>c.finished)) this.phase='finished';
-    if(this.player.finished&&this.firstFinish!==null&&this.time-this.firstFinish>90) this.phase='finished';
   }
-  drive(car,input,dt) {
+  
+drive(car,input,dt) {
     const number=v=>Number.isFinite(v)?v:0;
     car.throttle=smooth(car.throttle,clamp(number(input.throttle),0,1),4.5,dt);
     car.brake=smooth(car.brake,clamp(number(input.brake),0,1),9,dt);
@@ -142,7 +147,8 @@ export class Race {
     car.yaw=angle(car.yaw+car.yawRate*dt);car.x+=car.vx*dt;car.z+=car.vz*dt;car.speed=longitudinal;
     const limits=[0,14,25,38,52,67,90];
     if(car.gear<6&&longitudinal>limits[car.gear])car.gear++;
-    if(car.gear>1&&longitudinal<limits[car.gear-1]-3)car.gear--;
+    
+if(car.gear>1&&longitudinal<limits[car.gear-1]-3)car.gear--;
     const low=limits[car.gear-1];car.rpm=clamp(2500+(longitudinal-low)/Math.max(1,limits[car.gear]-low)*5300,900,8500);if(longitudinal<2)car.rpm=900+car.throttle*1800;
   }
   advance(car,dt) {
@@ -155,7 +161,7 @@ export class Race {
       const sign=p.lateral>=0?1:-1,nx=Math.cos(p.heading)*sign,nz=-Math.sin(p.heading)*sign;
       const outward=car.vx*nx+car.vz*nz;
       car.x=p.x+nx*(BARRIER-1.3);car.z=p.z+nz*(BARRIER-1.3);
-      if(outward>0) {car.vx-=nx*outward*1.2;car.vz-=nz*outward*1.2;this.hit(car,outward);}
+      if(outward>0) {car.vx-=nx*outward*1.2;car.vz-=nz*outward*1.2;this.hit(car,outward);} 
     }
     if(p.distance>HALF_WIDTH+1) {
       if(car.offTime===0)car.offStart=car.progress;
@@ -163,7 +169,8 @@ export class Race {
       if(!car.offPenalized&&car.offTime>.6&&car.progress-car.offStart>8) {this.penalty(car,PENALTIES.cut,'Track limits');car.offPenalized=true;}
     } else {car.offTime=0;car.offPenalized=false;}
     const gate=car.nextGate*this.track.gateSize;
-    if(before<gate&&car.progress>=gate) {
+    
+if(before<gate&&car.progress>=gate) {
       if(p.distance>HALF_WIDTH+1.5) {this.repair(car,'skip');return;}
       if(car.nextGate%this.track.gates===0) {
         if(car.lapStart!==null) {
@@ -178,7 +185,8 @@ export class Race {
     }
     if(car.progress>car.nextGate*this.track.gateSize+4) this.repair(car,'skip');
   }
-  hit(car,severity) {
+  
+hit(car,severity) {
     if(car.impactCooldown>0||severity<2) return;
     car.impactCooldown=.5;car.impact++;
     const amount=clamp(severity/75,.015,.4);

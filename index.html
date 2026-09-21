@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#173c56"><meta name="description" content="Three GT cars. One circuit. Five laps. A desktop browser racing game.">
+  <title>3cars | Meridian circuit</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23173c56'/%3E%3Ctext x='32' y='49' text-anchor='middle' font-size='49' font-family='Arial' font-weight='bold' fill='white'%3E3%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <canvas id="race-canvas" tabindex="0" aria-label="3D racing circuit. Use W or Up to accelerate, S or Down to brake, and A or D to steer."></canvas>
+  <header class="topbar"><a class="brand" href="./" aria-label="3cars home">3<span>cars</span><i></i></a><span class="track-label">Meridian circuit <span>GT racing</span></span><button id="mute" class="quiet" type="button" aria-pressed="false">Sound on</button></header>
+  <main>
+    <section id="menu" class="setup-panel" aria-labelledby="game-title">
+      <p class="circuit-caption">Five laps. Two rivals. Your line.</p><h1 id="game-title">Own the<br>next corner.</h1>
+      <p class="intro">Choose your GT car and take on Meridian. Brake before the turn. Let the grip do the rest.</p>
+      <form id="setup">
+        <fieldset class="cars"><legend>Choose your car</legend>
+          <label class="car-choice"><input type="radio" name="carId" value="vortex" checked><span class="swatch vortex"></span><span><strong>Vortex R</strong><small>Balanced chassis</small></span><span class="car-speed">281<small>km/h</small></span></label>
+          <label class="car-choice"><input type="radio" name="carId" value="apex"><span class="swatch apex"></span><span><strong>Apex S</strong><small>Cornering precision</small></span><span class="car-speed">263<small>km/h</small></span></label>
+          <label class="car-choice"><input type="radio" name="carId" value="titan"><span class="swatch titan"></span><span><strong>Titan GT</strong><small>Power on the straights</small></span><span class="car-speed">299<small>km/h</small></span></label>
+        </fieldset>
+        <div class="setup-options"><label>Conditions<select id="weather" name="weather"><option value="dry">Dry daylight</option><option value="wet">Rainy daylight</option></select></label><label>Graphics<select id="quality" name="quality"><option value="high">High detail</option><option value="medium">Balanced</option></select></label></div>
+        <p class="best-record">Best clean lap <strong id="saved-best">No lap recorded</strong></p>
+        <button id="start" class="primary" type="submit" disabled>Loading circuit…</button>
+      </form>
+      <details class="help"><summary>Controls and race rules</summary><dl><dt>W / Up</dt><dd>Accelerate</dd><dt>S / Down / Space</dt><dd>Brake</dd><dt>A D / Left Right</dt><dd>Steer</dd><dt>P / Escape</dt><dd>Pause or resume</dd><dt>R</dt><dd>Repair and return, +20 seconds</dd><dt>M</dt><dd>Mute sound</dd></dl><p>Automatic gears. ABS and traction control are always on. Track cuts add 5 seconds. Skipping a checkpoint returns your car and adds 10 seconds. Penalties affect the final result. Damaged tires, steering, and engines reduce performance.</p><p>Desktop keyboard required. This first version uses simplified vehicle physics and original procedural assets.</p></details>
+      <details class="history"><summary>Recent races <span id="history-count">0</span></summary><ol id="race-history"></ol></details>
+      <p id="storage-status" class="fine-print">Settings and results stay in this browser.</p>
+    </section>
+    <section id="hud" class="hud" aria-label="Race information" hidden>
+      <div class="race-status"><div><span>Position</span><strong id="position">3 <small>/ 3</small></strong></div><div><span>Lap</span><strong id="lap">1 <small>/ 5</small></strong></div><div><span>Race time</span><strong id="race-time">0:00.000</strong></div><button id="pause" class="quiet" type="button">Pause</button></div>
+      <aside class="timing"><h2>Race order</h2><ol id="standings"></ol><dl><dt>Current lap</dt><dd id="current-lap">Ready</dd><dt>Best clean lap</dt><dd id="best-lap">None yet</dd><dt>Penalties</dt><dd id="penalty">+0.0s</dd></dl></aside>
+      <canvas id="minimap" width="240" height="195" aria-label="Circuit map showing the three cars"></canvas>
+      <div class="vehicle-status"><span>Vehicle condition</span><label>Engine <meter id="engine-condition" min="0" max="1" value="1"></meter></label><label>Steering <meter id="steering-condition" min="0" max="1" value="1"></meter></label><label>Tires <meter id="tires-condition" min="0" max="1" value="1"></meter></label><small>R repairs and returns your car (+20s)</small></div>
+      <div class="instruments"><div class="rpm"><span id="rpm">900 RPM</span><div><i id="rpm-fill"></i></div></div><div class="speed-row"><span class="gear"><small>Gear</small><strong id="gear">1</strong></span><strong id="speed">0</strong><span class="units">km/h<br><small>Automatic</small></span></div><div class="assists"><span id="abs" title="Anti-lock braking is always enabled">ABS on</span><span id="tc" title="Traction control is always enabled">TC on</span><span id="conditions">Dry track</span></div></div>
+      <p id="notification" class="notification" role="status" aria-live="polite"></p><div id="countdown" class="countdown" aria-live="assertive" hidden>3</div>
+    </section>
+    <section id="pause-panel" class="modal" role="dialog" aria-modal="true" aria-labelledby="pause-title" hidden><h2 id="pause-title">Race paused</h2><p>The clock stops here. Take your time.</p><button id="resume" class="primary">Resume race</button><button id="restart" class="secondary">Restart race</button><button id="exit" class="quiet">Back to setup</button></section>
+    <section id="results" class="modal results" role="dialog" aria-modal="true" aria-labelledby="result-title" hidden><h2 id="result-title">Race complete</h2><p id="result-summary"></p><ol id="result-list"></ol><p class="fine-print">Final order includes time penalties.</p><button id="race-again" class="primary">Race again</button><button id="result-setup" class="secondary">Back to setup</button></section>
+    <section id="error" class="modal" role="alert" hidden><h2>Unable to start the game</h2><p id="error-message"></p><button onclick="location.reload()" class="primary">Reload game</button></section>
+  </main>
+  <noscript><div class="modal">Enable JavaScript to play 3cars.</div></noscript>
+  <script src="./vendor/babylon.js"></script><script type="module" src="./src/boot.js"></script>
+</body>
+</html>

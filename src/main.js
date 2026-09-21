@@ -11,6 +11,7 @@ function text(id,value){const node=ui[id];if(node.textContent!==String(value))no
 function selected(){return {carId:ui.setup.elements.carId.value,weather:ui.weather.value,quality:ui.quality.value,muted:settings.muted};}
 function storageStatus(){text('storage-status',records.available?'Settings, best laps, and the last 20 races stay in this browser.':'Browser storage is unavailable. This session will not be saved.');}
 function persistSettings(){settings=selected();records.saveSettings(settings);storageStatus();}
+
 function renderHistory(){
  const rows=records.results();text('history-count',rows.length);ui['race-history'].replaceChildren();
  for(const row of rows){const li=document.createElement('li'),small=document.createElement('small');li.textContent=`P${row.position} · ${CARS.find(c=>c.id===row.carId)?.name} · ${formatTime(row.time+row.penalty)}`;small.textContent=`${new Date(row.finishedAt).toLocaleString()} / ${row.weather==='wet'?'Rain':'Dry'} / +${row.penalty}s`;li.append(small);ui['race-history'].append(li);}
@@ -31,6 +32,7 @@ function syncPhase(){
  if(race.phase==='finished'){finishRace();$('race-again').focus();}
  if(race.phase==='menu')renderHistory();
 }
+
 function finishRace(){
  const order=race.standings(),p=race.player,position=order.indexOf(p)+1;
  text('result-title',position===1?'You take the win.':'Race complete');text('result-summary',`P${position} of 3. ${LAPS} laps at Meridian in ${formatTime(p.finishTime+p.penalty)}.`);
@@ -41,6 +43,7 @@ function finishRace(){
  }
  if(!saved){saved=true;records.recordRace({carId:p.model.id,weather:race.weather,position,time:p.finishTime,penalty:p.penalty,bestLap:p.bestLap,finishedAt:new Date().toISOString()});renderHistory();}
 }
+
 function updateHUD(){
  const p=race.player,order=race.standings();ui.position.innerHTML=`${order.indexOf(p)+1} <small>/ 3</small>`;ui.lap.innerHTML=`${p.lap} <small>/ ${LAPS}</small>`;
  text('race-time',formatTime(p.finished?p.finishTime:race.time));text('current-lap',p.finished?'Finished':p.lapStart===null?'Ready':formatTime(race.time-p.lapStart));text('best-lap',formatTime(p.bestLap));text('penalty',`+${p.penalty.toFixed(1)}s`);
@@ -59,6 +62,7 @@ function updateHUD(){
  drawMap();
 }
 const map=ui.minimap.getContext('2d');
+
 function drawMap(){
  if(!map)return;const t=race.track,project=p=>[120+p.x*.55,100+p.z*.55];map.clearRect(0,0,240,195);map.lineJoin='round';map.lineCap='round';map.beginPath();
  t.points.forEach((p,i)=>{const [x,y]=project(p);if(i)map.lineTo(x,y);else map.moveTo(x,y);});map.closePath();map.strokeStyle='#b3c7d2';map.lineWidth=7;map.stroke();map.strokeStyle='#ffffff';map.lineWidth=2;map.stroke();
@@ -70,20 +74,23 @@ function togglePause(){keys.clear();race.pause();syncPhase();if(race.phase!=='pa
 function fail(error){console.error(error);cancelAnimationFrame(frameId);audio.setMuted(true);ui.menu.hidden=true;ui.hud.hidden=true;ui.error.hidden=false;text('error-message',error.message||'Unable to render the circuit. Reload or try a different browser.');document.body.dataset.phase='error';}
 ui.setup.elements.carId.value=settings.carId;ui.weather.value=settings.weather;ui.quality.value=settings.quality;applyMute();
 view=new RaceView(ui['race-canvas'],race,settings);ui.start.disabled=false;text('start','Start five-lap race');syncPhase();renderHistory();
-ui.setup.addEventListener('change',()=>{persistSettings();resetRace();renderHistory();});
+ui.setup.addEventListener('change',()=>{const active=document.activeElement;persistSettings();resetRace();if(race.phase==='menu'&&active instanceof HTMLElement&&active.isConnected)active.focus();});
 ui.setup.addEventListener('submit',event=>{event.preventDefault();audio.unlock();persistSettings();resetRace(true);});
 ui.menu.addEventListener('pointerdown',()=>audio.unlock(),{once:true});
 ui.mute.addEventListener('click',()=>{audio.unlock();settings.muted=!settings.muted;records.saveSettings({muted:settings.muted});applyMute();});
 $('pause').addEventListener('click',togglePause);$('resume').addEventListener('click',togglePause);
 $('restart').addEventListener('click',()=>resetRace(true));$('race-again').addEventListener('click',()=>resetRace(true));
 $('exit').addEventListener('click',()=>resetRace());$('result-setup').addEventListener('click',()=>resetRace());
+
 const drivingKeys=new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space']);
 window.addEventListener('keydown',event=>{
- if(event.target.matches('select,input,summary')||event.ctrlKey||event.metaKey||event.altKey)return;
+ const target=event.target;
+ if(event.ctrlKey||event.metaKey||event.altKey||(target instanceof Element&&target.closest('select,input,textarea,summary,[contenteditable=""],[contenteditable="true"]')))return;
  if(event.code==='KeyM'&&!event.repeat){ui.mute.click();return;}
  if(race.phase==='menu'||race.phase==='finished')return;
+ if(['KeyP','Escape'].includes(event.code)&&!event.repeat){event.preventDefault();togglePause();return;}
+ if(target instanceof Element&&target.closest('button,a'))return;
  if(drivingKeys.has(event.code)){event.preventDefault();if(race.phase!=='paused')keys.add(event.code);}
- if(['KeyP','Escape'].includes(event.code)&&!event.repeat){event.preventDefault();togglePause();}
  if(event.code==='KeyR'&&!event.repeat&&race.phase==='racing'){event.preventDefault();race.repair();}
 });
 window.addEventListener('keyup',e=>keys.delete(e.code));
@@ -96,6 +103,7 @@ document.addEventListener('keydown',event=>{
  if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
 });
 const pressed=(...codes)=>codes.some(k=>keys.has(k))?1:0;
+
 function frame(now){
  try{
   const elapsed=Math.min(.1,Math.max(0,(now-last)/1000));last=now;

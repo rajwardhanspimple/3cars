@@ -72,7 +72,7 @@ export function makeTrack() {
 
 function createCar(model,index,track) {
   const progress=-10-index*7, p=track.at(progress,(index%2 ? -1 : 1)*2.2);
-  return {model,index,name:index===0?'You':index===1?'Mara':'Ellis',x:p.x,z:p.z,yaw:p.heading,vx:0,vz:0,speed:0,steer:0,throttle:0,brake:0,yawRate:0,gear:1,rpm:900,slip:0,tc:false,abs:false,
+  return {model,index,name:index===0?'You':index===1?'Mara':'Ellis',x:p.x,z:p.z,yaw:p.heading,vx:0,vz:0,speed:0,steer:0,steerTarget:0,steerReversing:false,throttle:0,brake:0,yawRate:0,gear:1,rpm:900,slip:0,tc:false,abs:false,
     nitro:100,nitroCooldown:0,boostActive:false,drifting:false,driftAngle:0,handbrake:false,steeringAngle:0,
     progress,previousS:p.s,hint:p.index,nextGate:0,lap:1,lapStart:null,lapTimes:[],lapValid:true,bestLap:null,finished:false,finishTime:null,penalty:0,damage:{engine:0,steering:0,tires:0},offTime:0,offStart:0,offPenalized:false,impact:0,impactCooldown:0,stuckTime:0,repairCooldown:0,notification:'',noticeUntil:0};
 }
@@ -99,7 +99,7 @@ export class Race {
     const safe=car.nextGate===0?-2:(car.nextGate-1)*this.track.gateSize+2;
     const p=this.track.at(safe,car.index===0?0:2.8*(car.index===1?1:-1));
     const interruptedBoost=car.boostActive;
-    car.x=p.x;car.z=p.z;car.yaw=p.heading;car.vx=0;car.vz=0;car.speed=0;car.steer=0;car.yawRate=0;car.progress=safe;car.previousS=p.s;car.hint=p.index;car.offTime=0;car.offPenalized=false;car.stuckTime=0;car.repairCooldown=3;
+    car.x=p.x;car.z=p.z;car.yaw=p.heading;car.vx=0;car.vz=0;car.speed=0;car.steer=0;car.steerTarget=0;car.steerReversing=false;car.yawRate=0;car.progress=safe;car.previousS=p.s;car.hint=p.index;car.offTime=0;car.offPenalized=false;car.stuckTime=0;car.repairCooldown=3;
     car.boostActive=false;car.drifting=false;car.driftAngle=0;car.handbrake=false;car.steeringAngle=0;if(interruptedBoost) car.nitroCooldown=ARCADE.nitroCooldown;
     if(kind==='repair') car.damage={engine:0,steering:0,tires:0};
     this.penalty(car,PENALTIES[kind],kind==='repair'?'Repaired and returned':'Skipped checkpoint'); return true;
@@ -149,9 +149,12 @@ export class Race {
     car.throttle=smooth(car.throttle,clamp(number(input.throttle),0,1),4.5,dt);
     car.brake=smooth(car.brake,clamp(number(input.brake),0,1),10,dt);
     const targetSteer=clamp(number(input.steer),-1,1);
-    const reversing=car.steer*targetSteer<-.01;
+    const priorTarget=Number.isFinite(car.steerTarget)?car.steerTarget:car.steer;
+    if(targetSteer*priorTarget<-.01 || targetSteer*car.steer<-.01) car.steerReversing=true;
+    car.steerTarget=targetSteer;
+    if(Math.abs(targetSteer)<.05 || Math.abs(car.steer-targetSteer)<.08) car.steerReversing=false;
     const turnIn=Math.abs(targetSteer)>Math.abs(car.steer)+.001;
-    car.steer=smooth(car.steer,targetSteer,reversing?ARCADE.steerReverseRate:(turnIn?ARCADE.steerTurnInRate:16),dt);
+    car.steer=smooth(car.steer,targetSteer,car.steerReversing?ARCADE.steerReverseRate:(turnIn?ARCADE.steerTurnInRate:16),dt);
     car.handbrake=!!input.handbrake;
     const contact=this.track.project(car.x,car.z,car.hint),off=contact.distance>HALF_WIDTH;
     const velocitySpeed=Math.hypot(car.vx,car.vz);

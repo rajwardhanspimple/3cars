@@ -24,7 +24,7 @@ test('checkpoints count five complete laps, not the initial start crossing',()=>
  assert.equal(c.finished,true);assert.equal(c.lapTimes.length,LAPS);assert.equal(c.nextGate,121);assert.equal(c.boostActive,false);
 });
 test('classification includes penalties and waits for all competitors',()=>{const r=new Race();r.phase='racing';r.player.finished=true;r.player.boostActive=true;r.firstFinish=0;r.time=100;r.step(1/120);assert.equal(r.phase,'racing');assert.equal(r.player.boostActive,false);r.cars.forEach((c,i)=>{c.finished=true;c.finishTime=100+i;c.penalty=0;});r.player.penalty=20;assert.equal(r.standings()[2],r.player);r.step(1/120);assert.equal(r.phase,'finished');});
-function place(r,speed=0,steer=0,s=50){const c=r.player,p=r.track.at(s);c.x=p.x;c.z=p.z;c.yaw=p.heading;c.hint=p.index;c.vx=Math.sin(p.heading)*speed;c.vz=Math.cos(p.heading)*speed;c.speed=speed;c.steer=steer;c.yawRate=0;return c;}
+function place(r,speed=0,steer=0,s=50){const c=r.player,p=r.track.at(s);c.x=p.x;c.z=p.z;c.yaw=p.heading;c.hint=p.index;c.vx=Math.sin(p.heading)*speed;c.vz=Math.cos(p.heading)*speed;c.speed=speed;c.steer=steer;c.steerTarget=steer;c.yawRate=0;return c;}
 
 test('engine damage reduces acceleration on an identical surface',()=>{
  const clean=new Race(),damaged=new Race();place(clean);place(damaged);damaged.player.damage.engine=.8;clean.player.throttle=1;damaged.player.throttle=1;
@@ -32,9 +32,10 @@ test('engine damage reduces acceleration on an identical surface',()=>{
  assert.ok(damaged.player.speed<clean.player.speed,`${damaged.player.speed} < ${clean.player.speed}`);
 });
 test('tire damage reduces cornering grip at equal speed and steering',()=>{
- const clean=new Race(),damaged=new Race();place(clean,30,.2);place(damaged,30,.2);damaged.player.damage.tires=.8;
- for(const r of [clean,damaged])r.drive(r.player,{steer:.2},1/120);
+ const clean=new Race(),damaged=new Race();place(clean,30,.32);place(damaged,30,.32);damaged.player.damage.tires=.8;
+ for(const r of [clean,damaged])r.drive(r.player,{steer:.32},1/120);
  assert.ok(damaged.player.slip>clean.player.slip,`slip ${damaged.player.slip} > ${clean.player.slip}`);
+ assert.ok(damaged.player.slip<1&&clean.player.slip<1);
  assert.ok(Math.abs(damaged.player.yawRate)<Math.abs(clean.player.yawRate));
 });
 test('competitive AI finishes dry and wet five-lap races',{timeout:120000},()=>{

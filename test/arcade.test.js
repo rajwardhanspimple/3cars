@@ -23,7 +23,7 @@ test('steering reaches arcade turn-in response within 100ms',()=>{
 });
 
 test('steering direction reversal is faster than normal turn-in',()=>{
-  const r=new Race();r.phase='racing';const c=place(r,20);c.steer=1;
+  const r=new Race();r.phase='racing';const c=place(r,20);c.steer=1;c.steerTarget=1;
   driveOnSameSurface(r,.1,{steer:-1});
   assert.ok(c.steer<-.85,`steer ${c.steer}`);
   assert.ok(c.steeringAngle<-.3,`steeringAngle ${c.steeringAngle}`);
@@ -129,7 +129,9 @@ test('engine, steering, and tire damage retain separate effects',()=>{
   const steerClean=new Race(),steerDamaged=new Race();steerClean.phase='racing';steerDamaged.phase='racing';place(steerClean,30);place(steerDamaged,30);steerDamaged.player.damage.steering=.8;
   driveOnSameSurface(steerClean,.2,{steer:.8});driveOnSameSurface(steerDamaged,.2,{steer:.8});
   assert.ok(Math.abs(steerDamaged.player.steeringAngle)<Math.abs(steerClean.player.steeringAngle));
-  const tireClean=new Race(),tireDamaged=new Race();tireClean.phase='racing';tireDamaged.phase='racing';place(tireClean,30);place(tireDamaged,30);tireDamaged.player.damage.tires=.8;
-  driveOnSameSurface(tireClean,.2,{steer:.8});driveOnSameSurface(tireDamaged,.2,{steer:.8});
-  assert.ok(tireDamaged.player.slip>tireClean.player.slip);
+  const tireClean=new Race(),tireDamaged=new Race();tireClean.phase='racing';tireDamaged.phase='racing';const cleanCar=place(tireClean,30),damagedCar=place(tireDamaged,30);cleanCar.steer=.32;cleanCar.steerTarget=.32;damagedCar.steer=.32;damagedCar.steerTarget=.32;tireDamaged.player.damage.tires=.8;
+  driveOnSameSurface(tireClean,.2,{steer:.32});driveOnSameSurface(tireDamaged,.2,{steer:.32});
+  assert.ok(tireDamaged.player.slip>tireClean.player.slip,`slip ${tireDamaged.player.slip} > ${tireClean.player.slip}`);
+  assert.ok(tireDamaged.player.slip<1&&tireClean.player.slip<1);
+  assert.ok(Math.abs(tireDamaged.player.yawRate)<Math.abs(tireClean.player.yawRate));
 });

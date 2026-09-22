@@ -153,7 +153,6 @@ function makeInstance(base, name, position, scaling, rotationY = 0, rotationX = 
  mesh.scaling.copyFrom(scaling);
  mesh.rotation.set(rotationX, rotationY, rotationZ);
  mesh.isVisible = true;
- mesh.receiveShadows = true;
  return mesh;
 }
 
@@ -390,17 +389,17 @@ function addTrees(view, track, materials, bounds, counts) {
  const rnd = seeded(CIRCUIT.scenerySeed);
  const groundAt = view.sceneryGroundHeight || (() => -0.16);
  const trunkBase = B.MeshBuilder.CreateCylinder('sakura-trunk-source', { height: 1, diameter: 1, tessellation: 7 }, view.scene);
- trunkBase.material = materials.bark; trunkBase.isVisible = false;
+ trunkBase.material = materials.bark; trunkBase.isVisible = false; trunkBase.receiveShadows = true;
  const branchBase = B.MeshBuilder.CreateCylinder('sakura-branch-source', { height: 1, diameter: 1, tessellation: 6 }, view.scene);
- branchBase.material = materials.bark; branchBase.isVisible = false;
+ branchBase.material = materials.bark; branchBase.isVisible = false; branchBase.receiveShadows = true;
  const blossomBase = B.MeshBuilder.CreateSphere('blossom-cluster-source', { segments: 8, diameter: 1 }, view.scene);
- blossomBase.material = materials.blossom; deformMesh(blossomBase, rnd, .34); blossomBase.isVisible = false;
+ blossomBase.material = materials.blossom; deformMesh(blossomBase, rnd, .34); blossomBase.isVisible = false; blossomBase.receiveShadows = true;
  const blossomWhite = B.MeshBuilder.CreateSphere('white-blossom-cluster-source', { segments: 8, diameter: 1 }, view.scene);
- blossomWhite.material = materials.blossomWhite; deformMesh(blossomWhite, rnd, .28); blossomWhite.isVisible = false;
+ blossomWhite.material = materials.blossomWhite; deformMesh(blossomWhite, rnd, .28); blossomWhite.isVisible = false; blossomWhite.receiveShadows = true;
  const coniferBase = B.MeshBuilder.CreateCylinder('conifer-source', { height: 1, diameterTop: .12, diameterBottom: 1, tessellation: 7 }, view.scene);
- coniferBase.material = materials.conifer; coniferBase.isVisible = false;
+ coniferBase.material = materials.conifer; coniferBase.isVisible = false; coniferBase.receiveShadows = true;
  const mixedBase = B.MeshBuilder.CreateSphere('mixed-leaf-source', { segments: 7, diameter: 1 }, view.scene);
- mixedBase.material = materials.leaf; deformMesh(mixedBase, rnd, .24); mixedBase.isVisible = false;
+ mixedBase.material = materials.leaf; deformMesh(mixedBase, rnd, .24); mixedBase.isVisible = false; mixedBase.receiveShadows = true;
  let sakura = 0, woodland = 0, shadowed = 0, rejected = 0;
  const addCaster = mesh => { if (shadowed < 180 && view.shadow) { view.shadow.addShadowCaster(mesh); shadowed++; } };
  const addSakura = (x, z, scale, heading = 0) => {

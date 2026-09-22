@@ -5,11 +5,33 @@ import { orientGroundSurfaces } from './surface-geometry.js';
 import { MOUNTAIN_TRACK, trackInfo } from './tracks.js';
 
 export function applyDaytimeCel(view) {
- registerCelPalette('mountain-day', { shadowColor: '#b3b5cc', rimColor: '#fff0d8' });
+ registerCelPalette('mountain-day', { shadowColor: '#777ab3', rimColor: '#fff0d8' });
  view.celShading = applyCelShading(view, {
-  palette: 'mountain-day', ambientStrength: .52, sunStrength: .4,
-  grade: { exposure: 1, contrast: 1.04, saturation: 14 },
+  palette: 'mountain-day', bandCount:3, terminator:.28, ambientStrength:.22, sunStrength:.8,
+  textureStrength:.12, textureLevels:4,
+  grade: { exposure: 1, contrast: 1.18, saturation: 38 },
   bloom: { enabled: view.quality === 'high', threshold: 1.05, weight: .08, kernel: 24 }
+ });
+ return view.celShading;
+}
+
+// Apply after city readiness: its original mild preset must not override the
+// stronger shared defaults. No city construction, light, or gameplay changes.
+export function applyNighttimeCel(view) {
+ registerCelPalette('city-night', {
+  shadowColor:'#6865a8', rimColor:'#8cdfff', fogColor:'#151b50',
+  materialColors:{asphalt:'#35436a','city-ground':'#252b50',
+   'city-building-0':'#3a497b','city-building-1':'#513a73',
+   'city-building-2':'#285b70','city-building-3':'#613b67'},
+  materialTextureStrengths:{asphalt:0,'city-ground':0}
+ });
+ view.celShading = applyCelShading(view, {
+  palette:'city-night', bandCount:3, terminator:.28, ambientStrength:.22, sunStrength:.95,
+  shadowStrength:.55, textureStrength:.12, textureLevels:4,
+  grade:{toneMappingEnabled:false, exposure:1.08, contrast:1.18, saturation:42},
+  bloom:{enabled:view.quality==='high', threshold:1.05, weight:.1, kernel:24},
+  outlines:{color:'#050611',pixels:view.quality==='high'?3:2.5,
+   cutoff:view.quality==='high'?110:80,maxWidth:.12,nearBoost:.5,nearDistance:24,carBoost:1.3}
  });
  return view.celShading;
 }
@@ -27,6 +49,7 @@ export function buildSelectedWorld(view) {
    if (view.scene.isDisposed) throw new Error('World loaded after scene disposal');
    orientGroundSurfaces(view.scene);
    if (track.id === MOUNTAIN_TRACK) applyDaytimeCel(view);
+   else applyNighttimeCel(view);
    view.scene.metadata = { ...view.scene.metadata, selectedTrack: { id: track.id, name: track.name } };
    return result;
   });

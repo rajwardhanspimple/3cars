@@ -6,6 +6,7 @@ const v = (x = 0, y = 0, z = 0) => new B.Vector3(x, y, z);
 const color = hex => B.Color3.FromHexString(hex);
 const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 const asset = path => new URL(path, import.meta.url).href;
+function seeded(seed) { return () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }; }
 
 function pbr(view, name, hex, roughness = .8, metallic = 0) { const m = view.mat(name, hex, metallic, roughness); m.environmentIntensity = .82; return m; }
 function loadTexture(scene, url, name, uScale = 1, vScale = uScale) {
@@ -91,65 +92,102 @@ function makeSky(view, materials) {
 }
 function assetParts(path) { const url = asset(path), i = url.lastIndexOf('/') + 1; return { rootUrl: url.slice(0, i), file: url.slice(i) }; }
 function meshWorldVertices(mesh) { const pos = mesh.getVerticesData(B.VertexBuffer.PositionKind) || [], world = mesh.getWorldMatrix(), out = []; for (let i = 0; i < pos.length; i += 3) out.push(B.Vector3.TransformCoordinates(v(pos[i], pos[i + 1], pos[i + 2]), world)); return out; }
-function sourceBaseCenter(meshes, min, max) {
- const height = Math.max(.01, max.y - min.y), lowLimit = min.y + height * .18, points = [];
- for (const mesh of meshes) for (const p of meshWorldVertices(mesh)) if (p.y <= lowLimit) points.push(p);
- const src = points.length ? points : [v((min.x + max.x) / 2, min.y, (min.z + max.z) / 2)]; let sx = 0, sz = 0; for (const p of src) { sx += p.x; sz += p.z; }
- return { x: sx / src.length, z: sz / src.length, samples: src.length };
-}
+function sourceBaseCenter(meshes, min, max) { const height = Math.max(.01, max.y - min.y), lowLimit = min.y + height * .18, points = []; for (const mesh of meshes) for (const p of meshWorldVertices(mesh)) if (p.y <= lowLimit) points.push(p); const src = points.length ? points : [v((min.x + max.x) / 2, min.y, (min.z + max.z) / 2)]; let sx = 0, sz = 0; for (const p of src) { sx += p.x; sz += p.z; } return { x: sx / src.length, z: sz / src.length, samples: src.length }; }
 async function loadTreeSource(view, type, path, targetHeight) {
- const scene = view.scene, parts = assetParts(path);
- if (scene.isDisposed) throw new Error(`${type} tree asset skipped because scene was disposed`);
+ const scene = view.scene, parts = assetParts(path); if (scene.isDisposed) throw new Error(`${type} tree asset skipped because scene was disposed`);
  const container = await B.SceneLoader.LoadAssetContainerAsync(parts.rootUrl, parts.file, scene).catch(error => { throw new Error(`${type} tree asset failed to load: ${error.message || error}`); });
  if (scene.isDisposed) { container.dispose(); throw new Error(`${type} tree asset loaded after scene disposal`); }
  const meshes = container.meshes.filter(mesh => mesh.getTotalVertices && mesh.getTotalVertices() > 0); if (!meshes.length) { container.dispose(); throw new Error(`${type} tree asset has no renderable meshes`); }
  for (const node of container.transformNodes) node.computeWorldMatrix(true);
  for (const mesh of meshes) { mesh.computeWorldMatrix(true); if (mesh.material) { mesh.material.backFaceCulling = false; if (mesh.material.needAlphaBlending?.()) mesh.material.transparencyMode = mesh.material.transparencyMode ?? B.Material.MATERIAL_ALPHABLEND; } }
- let min = v(Infinity, Infinity, Infinity), max = v(-Infinity, -Infinity, -Infinity);
- for (const mesh of meshes) { const info = mesh.getBoundingInfo().boundingBox; min = B.Vector3.Minimize(min, info.minimumWorld); max = B.Vector3.Maximize(max, info.maximumWorld); }
- const height = Math.max(.01, max.y - min.y), scale = targetHeight / height, base = sourceBaseCenter(meshes, min, max);
- return { type, container, scale, minY: min.y, baseX: base.x, baseZ: base.z, baseSamples: base.samples, sourceMeshes: meshes.length, sourceParents: container.transformNodes.length, sourceTriangleEstimate: meshes.reduce((n, m) => n + (m.getTotalIndices ? m.getTotalIndices() / 3 : 0), 0) };
+ let min = v(Infinity, Infinity, Infinity), max = v(-Infinity, -Infinity, -Infinity); for (const mesh of meshes) { const info = mesh.getBoundingInfo().boundingBox; min = B.Vector3.Minimize(min, info.minimumWorld); max = B.Vector3.Maximize(max, info.maximumWorld); }
+ const height = Math.max(.01, max.y - min.y), scale = targetHeight / height, base = sourceBaseCenter(meshes, min, max), radius = Math.max(Math.abs(max.x - base.x), Math.abs(min.x - base.x), Math.abs(max.z - base.z), Math.abs(min.z - base.z));
+ return { type, container, scale, minY: min.y, maxY: max.y, baseX: base.x, baseZ: base.z, baseSamples: base.samples, canopyRadius: radius, crownBase: min.y + height * .42, crownHeight: height * .46, sourceMeshes: meshes.length, sourceParents: container.transformNodes.length, sourceTriangleEstimate: meshes.reduce((n, m) => n + (m.getTotalIndices ? m.getTotalIndices() / 3 : 0), 0) };
 }
 function disposeTreeSource(source) { try { source?.container?.dispose(); } catch {} }
-function instantiateTree(view, source, tree, shadowRoots) {
+function instantiateTree(view, source, tree, shadowRoots, petalSources) {
  const result = source.container.instantiateModelsToScene(name => `${tree.id}-${name}`, false, { doNotInstantiate: false });
  const ground = view.sceneryGroundHeight ? view.sceneryGroundHeight(tree.x, tree.z) : tree.y - .16, root = new B.TransformNode(`tree-root-${tree.id}`, view.scene), normalize = new B.TransformNode(`tree-normalize-${tree.id}`, view.scene), s = source.scale * (tree.height / (source.type === 'green' ? 13.5 : 10.5));
  root.position.set(tree.x, ground, tree.z); root.rotation.y = tree.yaw; root.scaling.setAll(s); root.metadata = { layoutId: tree.id, treeType: tree.type, colliderCenter: { x: tree.x, z: tree.z, radius: tree.radius }, sourceBaseCenter: { x: source.baseX, y: source.minY, z: source.baseZ, samples: source.baseSamples } };
  normalize.parent = root; normalize.position.set(-source.baseX, -source.minY, -source.baseZ);
  for (const node of result.rootNodes) node.parent = normalize;
  root.computeWorldMatrix(true); normalize.computeWorldMatrix(true); for (const mesh of root.getChildMeshes(false)) { mesh.computeWorldMatrix(true); mesh.isPickable = false; }
+ if (source.type === 'cherry') petalSources.push({ id: tree.id, x: tree.x, z: tree.z, groundY: ground, yaw: tree.yaw, radius: Math.max(1.8, source.canopyRadius * s), crownBase: ground + (source.crownBase - source.minY) * s, crownHeight: Math.max(1.2, source.crownHeight * s) });
  shadowRoots.push(root); return root;
 }
-async function addAssetTrees(view, layout, counts, shadowRoots) {
+async function addAssetTrees(view, layout, counts, shadowRoots, petalSources) {
  const sources = [];
  try {
   const cherry = await loadTreeSource(view, 'cherry', '../assets/environment/cherry.glb', 10.5); sources.push(cherry);
   const green = await loadTreeSource(view, 'green', '../assets/environment/green-tree/optimized.glb', 13.5); sources.push(green);
   let cherryCount = 0, greenCount = 0;
-  for (const tree of layout.trees) { if (view.scene.isDisposed) throw new Error('tree instancing stopped because scene was disposed'); instantiateTree(view, tree.type === 'green' ? green : cherry, tree, shadowRoots); if (tree.type === 'green') greenCount++; else cherryCount++; }
-  counts.trees = layout.trees.length; counts.runtimeTreeInstances = layout.trees.length; counts.cherryTrees = cherryCount; counts.greenTrees = greenCount; counts.treeSourceTriangles = { cherry: Math.round(cherry.sourceTriangleEstimate), green: Math.round(green.sourceTriangleEstimate) }; counts.treeSourceParents = { cherry: cherry.sourceParents, green: green.sourceParents }; counts.treeSourceMeshes = { cherry: cherry.sourceMeshes, green: green.sourceMeshes }; counts.treeAssetFiles = { cherry: 'cherry.glb', green: 'optimized.glb' }; counts.treeBaseCenterMethod = 'low-trunk-vertex-average'; counts.treeInstancing = 'outer root at layout collider, normalized child offset before asset hierarchy';
+  for (const tree of layout.trees) { if (view.scene.isDisposed) throw new Error('tree instancing stopped because scene was disposed'); instantiateTree(view, tree.type === 'green' ? green : cherry, tree, shadowRoots, petalSources); if (tree.type === 'green') greenCount++; else cherryCount++; }
+  counts.trees = layout.trees.length; counts.runtimeTreeInstances = layout.trees.length; counts.cherryTrees = cherryCount; counts.greenTrees = greenCount; counts.petalCherrySources = petalSources.length; counts.treeSourceTriangles = { cherry: Math.round(cherry.sourceTriangleEstimate), green: Math.round(green.sourceTriangleEstimate) }; counts.treeSourceParents = { cherry: cherry.sourceParents, green: green.sourceParents }; counts.treeSourceMeshes = { cherry: cherry.sourceMeshes, green: green.sourceMeshes }; counts.treeAssetFiles = { cherry: 'cherry.glb', green: 'optimized.glb' }; counts.treeBaseCenterMethod = 'low-trunk-vertex-average'; counts.treeInstancing = 'outer root at layout collider, normalized child offset before asset hierarchy';
  } catch (error) { for (const source of sources) disposeTreeSource(source); throw error; }
 }
 function makePetalTexture(scene) {
  const tex = new B.DynamicTexture('curved-sakura-petal-alpha', { width: 128, height: 128 }, scene, false), ctx = tex.getContext(); ctx.clearRect(0,0,128,128);
  const grad = ctx.createRadialGradient(62, 54, 5, 64, 64, 62); grad.addColorStop(0, 'rgba(255,231,238,1)'); grad.addColorStop(.55, 'rgba(246,165,191,.92)'); grad.addColorStop(1, 'rgba(242,135,174,0)'); ctx.fillStyle = grad; ctx.beginPath(); ctx.moveTo(63, 10); ctx.bezierCurveTo(106, 27, 105, 91, 66, 121); ctx.bezierCurveTo(25, 91, 27, 28, 63, 10); ctx.closePath(); ctx.fill(); ctx.strokeStyle = 'rgba(244,116,154,.55)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(64, 18); ctx.bezierCurveTo(57, 47, 60, 82, 66, 112); ctx.stroke(); tex.update(); tex.hasAlpha = true; return tex;
 }
-function addPetals(view, materials, counts) {
+function addPetals(view, materials, counts, petalSources) {
  const mat = new B.StandardMaterial('unlit-shaped-sakura-petal-material', view.scene); mat.diffuseTexture = makePetalTexture(view.scene); mat.opacityTexture = mat.diffuseTexture; mat.emissiveColor = color('#f1a7bd'); mat.specularColor = B.Color3.Black(); mat.backFaceCulling = false; mat.disableLighting = true; mat.transparencyMode = B.Material.MATERIAL_ALPHABLEND; materials.petal = mat;
  const base = B.MeshBuilder.CreatePlane('curved-petal-source-plane', { width: .24, height: .42 }, view.scene); base.material = mat; base.isVisible = false; base.isPickable = false;
- const petals = [], max = 160; for (let i = 0; i < max; i++) { const p = base.createInstance(`air-petal-${i}`); p.isVisible = true; p.isPickable = false; petals.push({ mesh: p, seed: i * 97.13, age: (i % 37) / 37 * 6 }); }
- counts.petalPool = max; counts.petalSprite = 'procedural curved alpha texture'; return petals;
+ const rnd = seeded(7711), petals = [], max = 160;
+ const groundAt = (x, z) => Math.max(view.sceneryGroundHeight ? view.sceneryGroundHeight(x, z) : -999, roadHeight(x, z) - .08);
+ const pickSource = player => {
+  if (!petalSources.length) return null;
+  const near = player ? petalSources.filter(s => { const dx = s.x - player.x, dz = s.z - player.z; return dx * dx + dz * dz <= 70 * 70; }) : [];
+  const list = near.length ? near : petalSources;
+  return list[(rnd() * list.length) | 0];
+ };
+ const spawn = (p, player) => {
+  const source = pickSource(player); if (!source) { p.mesh.isVisible = false; return; }
+  const a = rnd() * Math.PI * 2, r = Math.sqrt(rnd()) * source.radius * .86, y = source.crownBase + source.crownHeight * (.18 + rnd() * .72), x = source.x + Math.cos(a) * r, z = source.z + Math.sin(a) * r;
+  p.sourceId = source.id; p.spawnPosition = { x, y, z }; p.sourceCenter = { x: source.x, z: source.z }; p.x = x; p.y = y; p.z = z; p.vx = .18 + (rnd() - .5) * .28; p.vy = -.16 - rnd() * .18; p.vz = .08 + (rnd() - .5) * .24; p.age = 0; p.life = 6 + rnd() * 5; p.spin = (rnd() - .5) * 5; p.phase = rnd() * Math.PI * 2; p.swirl = 0; p.mesh.isVisible = true; p.mesh.position.set(x, Math.max(y, groundAt(x, z) + .18), z);
+ };
+ for (let i = 0; i < max; i++) { const mesh = base.createInstance(`air-petal-${i}`); mesh.isVisible = false; mesh.isPickable = false; petals.push({ mesh, seed: i * 97.13, age: 99, sourceId: null, spawnPosition: null }); }
+ counts.petalPool = max; counts.petalSprite = 'procedural curved alpha texture'; counts.petalSource = 'tree-anchored cherry canopy'; counts.petalSourceSpecies = 'cherry only';
+ return { petals, spawn, groundAt, rnd };
 }
-function updatePetals(view, petals, dt, player, phase) { if (phase === 'paused' || dt <= 0 || !player) return; const speed = Math.max(6, player.speed || 0), forwardX = Math.sin(player.yaw || 0), forwardZ = Math.cos(player.yaw || 0); for (const p of petals) { p.age += dt * (.7 + speed * .012); const life = 6.5, u = (p.age % life) / life, side = Math.sin(p.seed) * 16, ahead = 20 - u * 42, x = player.x + forwardX * ahead + Math.cos(player.yaw) * side + Math.sin(p.seed + p.age) * 1.8, z = player.z + forwardZ * ahead - Math.sin(player.yaw) * side + Math.cos(p.seed * .7 + p.age) * 1.8; p.mesh.position.set(x, roadHeight(x, z) + 1.1 + Math.sin(u * Math.PI) * 2.8, z); p.mesh.rotation.set(p.age * 1.7 + p.seed, p.seed, p.age * 2.1); } }
+function updatePetals(view, petalSystem, dt, player, phase) {
+ const { petals, spawn, groundAt } = petalSystem;
+ if (phase === 'paused' || dt <= 0) return;
+ const cars = view.race?.cars || [], windX = .38, windZ = .14;
+ for (const p of petals) {
+  if (!p.sourceId) spawn(p, player);
+  if (!p.sourceId) continue;
+  p.age += dt;
+  p.vx += windX * dt * .08 + Math.sin(p.age * 2.1 + p.seed) * dt * .12;
+  p.vz += windZ * dt * .08 + Math.cos(p.age * 1.7 + p.seed) * dt * .10;
+  p.vy -= .42 * dt;
+  for (const car of cars) {
+   const dx = p.x - car.x, dz = p.z - car.z, d2 = dx * dx + dz * dz;
+   if (d2 < 9) {
+    const strength = (1 - Math.sqrt(d2) / 3) * dt * 1.6, cvx = Number.isFinite(car.vx) ? car.vx : Math.sin(car.yaw || 0) * (car.speed || 0), cvz = Number.isFinite(car.vz) ? car.vz : Math.cos(car.yaw || 0) * (car.speed || 0);
+    p.vx += cvx * strength * .28 - dz * strength * .7; p.vz += cvz * strength * .28 + dx * strength * .7; p.vy += strength * 1.2; p.swirl = Math.min(1, p.swirl + strength * 3);
+   }
+  }
+  p.swirl = Math.max(0, p.swirl - dt * 1.7);
+  p.x += p.vx * dt + Math.sin(p.age * 4.5 + p.seed) * (.08 + p.swirl * .22);
+  p.z += p.vz * dt + Math.cos(p.age * 3.7 + p.seed) * (.06 + p.swirl * .18);
+  p.y += p.vy * dt + Math.sin(p.age * 5.2 + p.seed) * .025;
+  const ground = groundAt(p.x, p.z);
+  const sd = p.sourceCenter ? Math.hypot(p.x - p.sourceCenter.x, p.z - p.sourceCenter.z) : 0;
+  if (p.y <= ground + .08 || p.age > p.life || sd > 95) { spawn(p, player); continue; }
+  p.mesh.position.set(p.x, Math.max(p.y, ground + .1), p.z);
+  p.mesh.rotation.set(p.age * 1.9 + p.seed, Math.sin(p.age * 3 + p.seed) * .7, p.age * p.spin + p.swirl * 4);
+ }
+}
+function petalState(petalSystem) { return petalSystem.petals.filter(p => p.sourceId).map(p => ({ sourceTreeId: p.sourceId, spawnPosition: p.spawnPosition, position: { x: p.x, y: p.y, z: p.z } })); }
 function syncRaceProps(view, propNodes, materials) { const props = view.race?.props; if (!Array.isArray(props)) return; for (const prop of props) { let node = propNodes.get(prop.id); if (!node) { node = makeProp(view, prop, materials); propNodes.set(prop.id, node); } node.setEnabled(prop.active !== false); slopePose(node, prop.x, prop.z, prop.yaw || 0, 0, prop.tilt || 0); } }
 function updateDynamicShadows(view, shadowRoots, state, player, dt) { if (!view.shadow || !player) return; state.timer = (state.timer || 0) + dt; if (state.timer < .2) return; state.timer = 0; for (const mesh of state.meshes) view.shadow.removeShadowCaster(mesh); state.meshes.clear(); const nearest = shadowRoots.map(root => { const dx = root.position.x - player.x, dz = root.position.z - player.z; return { root, d: dx * dx + dz * dz }; }).filter(item => item.d < 130 * 130).sort((a,b) => a.d - b.d).slice(0, 40); for (const item of nearest) for (const mesh of item.root.getChildMeshes(false)) { view.shadow.addShadowCaster(mesh); state.meshes.add(mesh); } }
 export function buildMountainWorld(view) {
- const scene = view.scene, track = view.race.track, bounds = track.bounds, layout = mountainLayout(track), counts = {}, texturePromises = [], shadowRoots = [];
+ const scene = view.scene, track = view.race.track, bounds = track.bounds, layout = mountainLayout(track), counts = {}, texturePromises = [], shadowRoots = [], petalSources = [];
  scene.clearColor = new B.Color4(.92, .55, .35, 1); scene.fogColor = color('#d69b75'); scene.fogDensity = view.quality === 'high' ? .00125 : .00165; scene.ambientColor = color('#a56f5c'); if (view.hemi) { view.hemi.intensity = .72; view.hemi.groundColor = color('#3e4738'); } if (view.sun) { view.sun.direction = v(-.72, -.48, .42); view.sun.position = v(260, 210, -210); view.sun.intensity = 2.7; }
  const asphalt = pbr(view, 'local-pbr-detailed-asphalt', '#46494a', .83, 0), ground = pbr(view, 'lush-mountain-ground', '#567342', .96, 0), rock = pbr(view, 'repeated-moss-stone-rock', '#6f7668', .88, 0);
  texturePromises.push(loadTexture(scene, asset('../assets/environment/asphalt-diff.jpg'), 'asphalt-diff', 1).then(t => asphalt.albedoTexture = t)); texturePromises.push(loadTexture(scene, asset('../assets/environment/asphalt-normal.jpg'), 'asphalt-normal', 1).then(t => { asphalt.bumpTexture = t; asphalt.bumpTexture.level = .075; })); texturePromises.push(loadTexture(scene, asset('../assets/environment/asphalt-rough.jpg'), 'asphalt-rough', 1).then(t => assignMetallicRoughness(asphalt, t))); texturePromises.push(loadTexture(scene, asset('../assets/environment/rock-diff.jpg'), 'rock-diff', 1).then(t => rock.albedoTexture = t)); texturePromises.push(loadTexture(scene, asset('../assets/environment/rock-normal.jpg'), 'rock-normal', 1).then(t => { rock.bumpTexture = t; rock.bumpTexture.level = .12; })); texturePromises.push(loadTexture(scene, asset('../assets/environment/rock-rough.jpg'), 'rock-rough', 1).then(t => assignMetallicRoughness(rock, t))); view.roadMaterial = asphalt;
  const materials = { asphalt, ground, rock, white: pbr(view, 'slightly-worn-white-road-paint', '#f3f1df', .58, 0), yellow: pbr(view, 'warm-yellow-center-paint', '#e6c13d', .5, 0), curb: pbr(view, 'banked-concrete-curb', '#c8c5b6', .78, 0), dark: pbr(view, 'dark-weathered-metal', '#343a3b', .62, .25), rail: pbr(view, 'visible-galvanized-guardrail', '#aeb7b4', .38, .65), railDark: pbr(view, 'dark-guardrail-post', '#4a5352', .48, .45), orange: pbr(view, 'orange-safety-cone', '#d96c2d', .55, 0), mountainNear: pbr(view, 'warm-near-mountain', '#5d716b', .95, 0), mountainFar: pbr(view, 'hazy-far-mountain', '#82908a', .98, 0), templeWall: pbr(view, 'distant-temple-wall', '#d3c6a3', .82, 0), templeRoof: pbr(view, 'distant-temple-roof', '#7d2f32', .55, 0) };
- view.sceneryMaterials = materials; makeSky(view, materials); addTerrain(view, materials, bounds, counts); addRoad(view, materials, counts); addWalls(view, layout, materials, counts); addGuardrails(view, materials, counts); const propNodes = addProps(view, layout, materials, counts); addMountainsAndTemple(view, materials, bounds, counts); const petals = addPetals(view, materials, counts); const shadowState = { timer: .2, meshes: new Set() };
- view.scenery = { ready: null, name: MOUNTAIN.name, preview: true, propNodes, petals, setWeather(weather) { const wet = weather === 'wet'; scene.fogDensity = wet ? .0026 : (view.quality === 'high' ? .00125 : .00165); if (view.sun) view.sun.intensity = wet ? 1.05 : 2.7; if (view.hemi) view.hemi.intensity = wet ? .62 : .72; asphalt.roughness = wet ? .42 : .83; asphalt.metallic = 0; asphalt.environmentIntensity = wet ? 1.05 : .82; }, update(dt, player, phase) { syncRaceProps(view, propNodes, materials); updatePetals(view, petals, dt, player, phase); updateDynamicShadows(view, shadowRoots, shadowState, player, dt); if (phase === 'menu' && view.camera && player) { const targetS = track.length * .68, focus = track.at(targetS, 0), eye = track.at(targetS - 58, -82), desired = v(eye.x, roadHeight(eye.x, eye.z) + 42, eye.z); B.Vector3.LerpToRef(view.camera.position, desired, 1 - Math.exp(-dt * 2.2), view.camera.position); view.camera.setTarget(v(focus.x, roadHeight(focus.x, focus.z) + 2.4, focus.z)); } } };
- view.scenery.ready = Promise.all(texturePromises).then(() => addAssetTrees(view, layout, counts, shadowRoots)).then(() => scene.whenReadyAsync()).then(() => { if (view.createRain) view.createRain(); view.scenery.setWeather(view.race.weather); scene.metadata = scene.metadata || {}; scene.metadata.scenery = { name: MOUNTAIN.name, circuitId: MOUNTAIN.id, preview: true, counts: { ...counts, sharedLayoutTrees: layout.trees.length, sharedLayoutWalls: layout.walls.length, staticMeshes: scene.meshes.length, materials: Object.keys(view.materials).length, quality: view.quality }, textureMemoryBoundMB: 96, interfaces: ['buildMountainWorld(view)', 'view.scenery.ready', 'view.updateScenery(dt, player, phase)', 'scene.metadata.scenery'], caveats: ['Tree and PBR texture asset load failures reject view.scenery.ready.', 'Tree roots carry layout metadata for collision tests.', 'Green foliage uses optimized.glb at runtime.', 'Dynamic tree shadows are refreshed at 200 ms intervals and capped to 40 nearest trees; car shadow casters remain fixed.', 'Visible guardrails are placed at the physics barrier offset.'] }; return scene.metadata.scenery; }).catch(error => { view.scenery.error = error; throw error; });
+ view.sceneryMaterials = materials; makeSky(view, materials); addTerrain(view, materials, bounds, counts); addRoad(view, materials, counts); addWalls(view, layout, materials, counts); addGuardrails(view, materials, counts); const propNodes = addProps(view, layout, materials, counts); addMountainsAndTemple(view, materials, bounds, counts); const petalSystem = addPetals(view, materials, counts, petalSources); const shadowState = { timer: .2, meshes: new Set() };
+ view.scenery = { ready: null, name: MOUNTAIN.name, preview: true, propNodes, petalSystem, getPetalState: () => petalState(petalSystem), setWeather(weather) { const wet = weather === 'wet'; scene.fogDensity = wet ? .0026 : (view.quality === 'high' ? .00125 : .00165); if (view.sun) view.sun.intensity = wet ? 1.05 : 2.7; if (view.hemi) view.hemi.intensity = wet ? .62 : .72; asphalt.roughness = wet ? .42 : .83; asphalt.metallic = 0; asphalt.environmentIntensity = wet ? 1.05 : .82; }, update(dt, player, phase) { syncRaceProps(view, propNodes, materials); updatePetals(view, petalSystem, dt, player, phase); updateDynamicShadows(view, shadowRoots, shadowState, player, dt); if (phase === 'menu' && view.camera && player) { const targetS = track.length * .68, focus = track.at(targetS, 0), eye = track.at(targetS - 58, -82), desired = v(eye.x, roadHeight(eye.x, eye.z) + 42, eye.z); B.Vector3.LerpToRef(view.camera.position, desired, 1 - Math.exp(-dt * 2.2), view.camera.position); view.camera.setTarget(v(focus.x, roadHeight(focus.x, focus.z) + 2.4, focus.z)); } } };
+ view.scenery.ready = Promise.all(texturePromises).then(() => addAssetTrees(view, layout, counts, shadowRoots, petalSources)).then(() => scene.whenReadyAsync()).then(() => { if (view.createRain) view.createRain(); view.scenery.setWeather(view.race.weather); scene.metadata = scene.metadata || {}; scene.metadata.scenery = { name: MOUNTAIN.name, circuitId: MOUNTAIN.id, preview: true, counts: { ...counts, petalSource: 'tree-anchored cherry canopy', petalStateAccessor: 'view.scenery.getPetalState()', sharedLayoutTrees: layout.trees.length, sharedLayoutWalls: layout.walls.length, staticMeshes: scene.meshes.length, materials: Object.keys(view.materials).length, quality: view.quality }, textureMemoryBoundMB: 96, interfaces: ['buildMountainWorld(view)', 'view.scenery.ready', 'view.updateScenery(dt, player, phase)', 'view.scenery.getPetalState()', 'scene.metadata.scenery'], caveats: ['Tree and PBR texture asset load failures reject view.scenery.ready.', 'Tree roots carry layout metadata for collision tests.', 'Green foliage uses optimized.glb at runtime.', 'Pink petals emit only from cherry tree canopy sources and then move in world space.', 'Dynamic tree shadows are refreshed at 200 ms intervals and capped to 40 nearest trees; car shadow casters remain fixed.', 'Visible guardrails are placed at the physics barrier offset.'] }; return scene.metadata.scenery; }).catch(error => { view.scenery.error = error; throw error; });
 }

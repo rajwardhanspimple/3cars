@@ -46,7 +46,7 @@ export class RaceView extends CircuitView {
   }
   const p=race.player,bodyX=Math.sin(p.yaw),bodyZ=Math.cos(p.yaw),speed=Math.max(0,p.speed||0),velSpeed=Math.hypot(p.vx||0,p.vz||0);
   let velX=bodyX,velZ=bodyZ;if(velSpeed>.35){velX=(p.vx||0)/velSpeed;velZ=(p.vz||0)/velSpeed;}
-  const driftBlend=clamp(Math.abs(p.driftAngle||0)*1.35+(p.drifting?.24:0),0,.72);
+  const driftBlend=clamp(Math.abs(p.driftAngle||0)*1.35+(p.drifting ? .24 : 0),0,.72);
   let lookX=bodyX+(velX-bodyX)*driftBlend,lookZ=bodyZ+(velZ-bodyZ)*driftBlend;const lookLen=Math.hypot(lookX,lookZ)||1;lookX/=lookLen;lookZ/=lookLen;
   const steer=clamp(p.steeringAngle||0,-.55,.55),latX=Math.cos(p.yaw),latZ=-Math.sin(p.yaw);let desired,target;
   if(race.phase==='menu'){

@@ -34,8 +34,8 @@ export class DrivingEffects{
   if(this.disposed)return;const racing=phase==='racing';
   this.updateSmoke(dt);this.updateFlames(cars,racing);
   if(!racing||dt<=0)return;
-  this.emitClock+=dt;const emitStep=this.reducedMotion?.13:.055;if(this.emitClock<emitStep)return;this.emitClock=0;
-  for(const car of cars){const state=this.carStates[car.index];if(!state)continue;const speed=Math.max(0,car.speed||0),slip=clamp((car.slip||0)+(car.drifting?.45:0)+(car.brake||0)*.28,0,1);
+  this.emitClock+=dt;const emitStep=this.reducedMotion ? .13 : .055;if(this.emitClock<emitStep)return;this.emitClock=0;
+  for(const car of cars){const state=this.carStates[car.index];if(!state)continue;const speed=Math.max(0,car.speed||0),slip=clamp((car.slip||0)+(car.drifting ? .45 : 0)+(car.brake||0)*.28,0,1);
    if(!state.ready){state.lastX=state.lastSkidX=car.x;state.lastZ=state.lastSkidZ=car.z;state.ready=true;continue;}
    if(speed<5||slip<.12){state.lastX=car.x;state.lastZ=car.z;continue;}
    if(!this.reducedMotion||slip>.42)this.emitSmoke(car,slip);

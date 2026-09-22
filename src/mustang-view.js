@@ -1,11 +1,12 @@
 import {RaceView as CircuitView} from './view.js';
-import {createMustang,createCarEnvironment,MUSTANG_TRIANGLES} from './mustang.js';
+import {createMustangFleet,createCarEnvironment,MUSTANG_TRIANGLES,MUSTANG_FLEET_TRIANGLES} from './mustang.js';
 import {DrivingEffects} from './driving-effects.js';
 import {RenderMotion,FollowCamera} from './render-motion.js';
 import {clamp} from './sim.js';
 const B=globalThis.BABYLON;
 const v=(x=0,y=0,z=0)=>new B.Vector3(x,y,z);
 const nowSeconds=()=>((globalThis.performance?.now?.()??Date.now())*.001);
+const baseMaterialName=name=>String(name||'').replace(/^car-\d+-/,'');
 export class RaceView extends CircuitView {
  constructor(canvas,race,options){
   super(canvas,race,options);
@@ -18,22 +19,39 @@ export class RaceView extends CircuitView {
   this.scene.imageProcessingConfiguration.contrast=1.08;
  }
  setRace(race){this.ready=this.refreshRace(race);return this.ready;}
+ disposeCurrentCarNodes(){
+  for(const item of this.carNodes||[]){
+   for(const mesh of item?.root?.getChildMeshes?.()||[])this.shadow.removeShadowCaster(mesh);
+   item?.root?.dispose?.();
+  }
+  this.carNodes=[];
+ }
  async refreshRace(race){
   const revision=this.revision=(this.revision||0)+1;this.race=race;
   this.motion?.clear();this.followCamera=new FollowCamera();this._boostFov=0;
   const status=document.getElementById('model-status');if(status)status.textContent='Loading original Mustang geometry...';
-  if(!this.modelPromise)this.modelPromise=createMustang(this,race.player);
-  const player=await this.modelPromise;
+  if(!this.carNodes?.every?.(node=>node?.imported))this.disposeCurrentCarNodes();
+  if(!this.fleetPromise)this.fleetPromise=createMustangFleet(this,race.cars);
+  const fleet=await this.fleetPromise;
   if(this.disposed||revision!==this.revision)return;
-  for(const item of this.carNodes){if(item===player)continue;for(const mesh of item.root.getChildMeshes())this.shadow.removeShadowCaster(mesh);item.root.dispose();}
-  this.carNodes=[player,...race.cars.slice(1).map(car=>super.createCar(car))];
-  if(player.paint)player.paint.albedoColor=B.Color3.FromHexString(race.player.model.color).toLinearSpace();
-  for(const wheel of player.wheels){wheel.spin.rotation.setAll(0);wheel.pivot.rotation.setAll(0);}
-  player.body.rotation.setAll(0);this.cacheTailMaterials();this.effects?.setCarNodes(this.carNodes);this.cameraReady=false;this.setWeather(race.weather);
-  if(status){status.textContent='Original model: 1,493,119 triangles. No reduced-detail versions.';status.dataset.triangles=String(MUSTANG_TRIANGLES);status.dataset.loaded='true';}
+  this.carNodes=fleet;
+  for(const car of race.cars){
+   const node=this.carNodes[car.index]||this.carNodes.find(item=>item.root.name===`car-${car.index}`);if(!node)continue;
+   node.model=car.model;
+   if(node.paint)node.paint.albedoColor=B.Color3.FromHexString(car.model.color).toLinearSpace();
+   for(const wheel of node.wheels){wheel.spin.rotation.setAll(0);wheel.pivot.rotation.setAll(0);}
+   node.body.rotation.setAll(0);
+  }
+  this.cacheTailMaterials();this.effects?.setCarNodes(this.carNodes);this.cameraReady=false;this.setWeather(race.weather);
+  if(status){
+   status.textContent='Original Mustang fleet: 3 × 1,493,119 = 4,479,357 triangles. Shared geometry, no reduced-detail versions.';
+   status.dataset.triangles=String(MUSTANG_TRIANGLES);
+   status.dataset.totalTriangles=String(MUSTANG_FLEET_TRIANGLES);
+   status.dataset.loaded='true';
+  }
  }
  cacheTailMaterials(){
-  for(const node of this.carNodes||[])if(node?.imported&&!node.tailMaterial)node.tailMaterial=node.meshes?.find(mesh=>mesh.material?.name==='RedGlass')?.material||null;
+  for(const node of this.carNodes||[])if(node?.imported&&!node.tailMaterial)node.tailMaterial=node.meshes?.find(mesh=>baseMaterialName(mesh.material?.name)==='RedGlass')?.material||null;
  }
  render(dt){
   if(this.disposed||this.carNodes.length!==3)return;
@@ -64,6 +82,7 @@ export class RaceView extends CircuitView {
   this.camera.fov=race.phase==='menu'?.65:(this.reducedMotion?.8:.8+clamp(speed/500,0,.12)+this._boostFov*.035);
   if(race.weather==='wet'){for(let i=0;i<this.rainLines.length;i++){const x=p.x+Math.sin(i*127.1)*25,z=p.z+Math.cos(i*311.7)*25,y=((i*.71-this.elapsed*23)%20+20)%20;this.rainLines[i][0].set(x,y,z);this.rainLines[i][1].set(x-.18,y-1.2,z+.08);}B.MeshBuilder.CreateLineSystem('rain',{lines:this.rainLines,instance:this.rain});}
   this.effects?.update(this.carNodes,cars,stepDt,race.phase);
+  this.updateScenery?.(stepDt,p,race.phase);
   this.scene.render();
  }
  dispose(){if(this.disposed)return;this.effects?.dispose();this.effects=null;this.motion?.clear();this.disposed=true;this.revision=(this.revision||0)+1;super.dispose();}

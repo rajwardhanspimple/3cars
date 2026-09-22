@@ -6,3 +6,4 @@ test('worker snapshots reach the rendered full-resolution scene',async({page})=>
  await page.locator('#start').click();await expect(page.locator('body')).toHaveAttribute('data-phase','racing',{timeout:90000});await page.keyboard.press('p');await expect(page.locator('#pause-panel')).toBeVisible();
  const stats=await page.evaluate(()=>{const scene=BABYLON.Engine.Instances.at(-1).scenes[0];return{frame:scene.getFrameId(),triangles:scene.getTransformNodeByName('car-0').getChildMeshes().filter(m=>m.metadata?.mustang).reduce((sum,m)=>sum+m.getTotalIndices()/3,0),sim:scene.metadata.simulation};});
  console.log('Worker/renderer verification',JSON.stringify(stats));expect(stats.triangles).toBe(1493119);expect(stats.frame).toBeGreaterThan(0);expect(stats.sim.phase).toBe('paused');expect(errors).toEqual([]);
+});

@@ -183,6 +183,7 @@ function addTerrain(view, track, materials, bounds, counts) {
  const size = 1120, half = size / 2, cells = view.quality === 'high' ? 60 : 44;
  const cellDiag = Math.SQRT2 * size / cells;
  const positions = [], indices = [], uvs = [];
+ const originX = bounds.centerX - half, originZ = bounds.centerZ - half, step = size / cells;
  const heightAt = (x, z) => {
   const p = track.project(x, z);
   if (p.distance <= BARRIER + cellDiag + 8) return -0.16;
@@ -194,13 +195,21 @@ function addTerrain(view, track, materials, bounds, counts) {
   return -0.16 + roadBlend * (broad + ridge) - riverCut * 9;
  };
  for (let iz = 0; iz <= cells; iz++) for (let ix = 0; ix <= cells; ix++) {
-  const x = bounds.centerX - half + ix / cells * size;
-  const z = bounds.centerZ - half + iz / cells * size;
+  const x = originX + ix * step;
+  const z = originZ + iz * step;
   const h = heightAt(x, z);
   if (track.project(x, z).distance <= BARRIER + cellDiag + 8 && h > 0) throw new Error('terrain corridor above road');
   positions.push(x, h, z);
   uvs.push(x / 6, z / 6);
  }
+ const vertexHeight = (ix, iz) => positions[((iz * (cells + 1) + ix) * 3) + 1];
+ view.sceneryGroundHeight = (x, z) => {
+  const fx = clamp((x - originX) / step, 0, cells), fz = clamp((z - originZ) / step, 0, cells);
+  const ix = Math.min(cells - 1, Math.max(0, Math.floor(fx))), iz = Math.min(cells - 1, Math.max(0, Math.floor(fz)));
+  const tx = fx - ix, tz = fz - iz;
+  const h00 = vertexHeight(ix, iz), h10 = vertexHeight(ix + 1, iz), h01 = vertexHeight(ix, iz + 1), h11 = vertexHeight(ix + 1, iz + 1);
+  return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
+ };
  for (let iz = 0; iz < cells; iz++) for (let ix = 0; ix < cells; ix++) {
   const a = iz * (cells + 1) + ix, b = a + 1, c = a + cells + 1, d = c + 1;
   indices.push(a, c, b, b, c, d);
@@ -214,6 +223,7 @@ function addTerrain(view, track, materials, bounds, counts) {
  mesh.receiveShadows = true;
  counts.terrainVertices = positions.length / 3;
  counts.terrainFlatMargin = BARRIER + cellDiag + 8;
+ counts.groundHeightSampler = 'bilinear-terrain-grid';
  return mesh;
 }
 
@@ -378,6 +388,7 @@ function addMountains(view, materials, bounds, counts) {
 
 function addTrees(view, track, materials, bounds, counts) {
  const rnd = seeded(CIRCUIT.scenerySeed);
+ const groundAt = view.sceneryGroundHeight || (() => -0.16);
  const trunkBase = B.MeshBuilder.CreateCylinder('sakura-trunk-source', { height: 1, diameter: 1, tessellation: 7 }, view.scene);
  trunkBase.material = materials.bark; trunkBase.isVisible = false;
  const branchBase = B.MeshBuilder.CreateCylinder('sakura-branch-source', { height: 1, diameter: 1, tessellation: 6 }, view.scene);
@@ -393,16 +404,17 @@ function addTrees(view, track, materials, bounds, counts) {
  let sakura = 0, woodland = 0, shadowed = 0, rejected = 0;
  const addCaster = mesh => { if (shadowed < 180 && view.shadow) { view.shadow.addShadowCaster(mesh); shadowed++; } };
  const addSakura = (x, z, scale, heading = 0) => {
-  const trunk = makeInstance(trunkBase, 'sakura-trunk', v(x, 2.15 * scale, z), v(.55 * scale, 4.3 * scale, .55 * scale), heading, .03 * (rnd() - .5), .08 * (rnd() - .5));
+  const gy = groundAt(x, z);
+  const trunk = makeInstance(trunkBase, 'sakura-trunk', v(x, gy + 2.15 * scale, z), v(.55 * scale, 4.3 * scale, .55 * scale), heading, .03 * (rnd() - .5), .08 * (rnd() - .5));
   addCaster(trunk);
   for (let b = 0; b < 4; b++) {
    const a = heading + b * Math.PI * .5 + (rnd() - .5) * .55;
-   const br = makeInstance(branchBase, 'sakura-connected-branch', v(x + Math.sin(a) * 1.0 * scale, (3.8 + rnd() * .7) * scale, z + Math.cos(a) * 1.0 * scale), v(.18 * scale, (2.4 + rnd() * .6) * scale, .18 * scale), a, .65 + rnd() * .22, Math.sin(a) * .65);
+   const br = makeInstance(branchBase, 'sakura-connected-branch', v(x + Math.sin(a) * 1.0 * scale, gy + (3.8 + rnd() * .7) * scale, z + Math.cos(a) * 1.0 * scale), v(.18 * scale, (2.4 + rnd() * .6) * scale, .18 * scale), a, .65 + rnd() * .22, Math.sin(a) * .65);
    if (b < 2) addCaster(br);
   }
   for (let c = 0; c < 8; c++) {
    const a = heading + c * .78 + (rnd() - .5) * .3;
-   const r = (1.3 + rnd() * 2.2) * scale, y = (4.4 + rnd() * 2.2) * scale;
+   const r = (1.3 + rnd() * 2.2) * scale, y = gy + (4.4 + rnd() * 2.2) * scale;
    const mesh = makeInstance(c % 3 === 0 ? blossomWhite : blossomBase, 'irregular-sakura-blossom', v(x + Math.sin(a) * r, y, z + Math.cos(a) * r), v((1.6 + rnd() * 1.2) * scale, (.9 + rnd() * .65) * scale, (1.3 + rnd() * 1.1) * scale), rnd() * Math.PI, (rnd() - .5) * .45);
    if (c < 3) addCaster(mesh);
   }
@@ -422,9 +434,10 @@ function addTrees(view, track, materials, bounds, counts) {
   const x = bounds.centerX - 455 + rnd() * 910, z = bounds.centerZ - 455 + rnd() * 910;
   if (Math.abs(x - CIRCUIT.riverX) < 56 && z > bounds.minZ - 230 && z < bounds.maxZ + 230) { rejected++; continue; }
   if (!clearFootprint(track, x, z, 12, 12)) { rejected++; continue; }
-  makeInstance(trunkBase, 'woodland-trunk', v(x, 2.1, z), v(.46, 4.2, .46), rnd() * Math.PI);
-  if (woodland % 2) makeInstance(coniferBase, 'layered-conifer', v(x, 6.7, z), v(5 + rnd() * 2, 9 + rnd() * 4, 5 + rnd() * 2), rnd() * Math.PI);
-  else makeInstance(mixedBase, 'mixed-woodland-crown', v(x, 6.0 + rnd() * 2, z), v(4 + rnd() * 2, 3 + rnd() * 1.4, 4 + rnd() * 2), rnd() * Math.PI);
+  const gy = groundAt(x, z);
+  makeInstance(trunkBase, 'woodland-trunk', v(x, gy + 2.1, z), v(.46, 4.2, .46), rnd() * Math.PI);
+  if (woodland % 2) makeInstance(coniferBase, 'layered-conifer', v(x, gy + 6.7, z), v(5 + rnd() * 2, 9 + rnd() * 4, 5 + rnd() * 2), rnd() * Math.PI);
+  else makeInstance(mixedBase, 'mixed-woodland-crown', v(x, gy + 6.0 + rnd() * 2, z), v(4 + rnd() * 2, 3 + rnd() * 1.4, 4 + rnd() * 2), rnd() * Math.PI);
   woodland++;
  }
  counts.sakuraTrees = sakura;

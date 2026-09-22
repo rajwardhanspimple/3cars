@@ -1,6 +1,7 @@
 import { buildMountainWorld } from './mountain-world.js';
 import { buildCityWorld } from './city-world.js';
 import { expandCityDistrict, auditCityDistrict } from './city-district.js';
+import { installFacadeMapping } from './facade-mapping.js';
 import { installCityLife } from './city-life-view.js';
 import { applyCelShading, registerCelPalette } from './cel-shading.js';
 import { installCelSurfaceDetails } from './cel-surface-details.js';
@@ -59,7 +60,7 @@ export function buildSelectedWorld(view) {
    const district = city ? expandCityDistrict(view) : null;
    orientGroundSurfaces(view.scene);
    if (!city) applyDaytimeCel(view);
-   else { applyNighttimeCel(view); district.finish(); auditCityDistrict(view); installCityLife(view); view.scene.metadata.scenery.ready = true; }
+   else { applyNighttimeCel(view); district.finish(); installFacadeMapping(view.scene); auditCityDistrict(view); installCityLife(view); view.scene.metadata.scenery.ready = true; }
    view.scene.metadata = { ...view.scene.metadata, selectedTrack: { id: track.id, name: track.name } };
    return result;
   }).catch(error => {

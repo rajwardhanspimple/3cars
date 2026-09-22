@@ -1,6 +1,7 @@
 // Surface-only repairs. No mesh creation, vertex writes, parenting or lights.
 // Installed after world readiness. New fleet shaders are picked up before their
 // first draw, after render interpolation has posed the car roots.
+import { refineCarMaterial } from './car-cel-materials.js';
 const B=globalThis.BABYLON;
 const installed=new WeakMap();
 export const SURFACE_STYLE=Object.freeze({paintShadow:.32,paintLight:.68,paintRim:.06,
@@ -93,6 +94,8 @@ export function installCelSurfaceDetails(view) {
    fragment=replaceOnce(fragment,'shaded += sunColor*highlight*specularStrength;','shaded += base*highlight*.08;');
    mat.metadata.celPaintHuePreserved=true;
   }
+  const carResponse=refineCarMaterial(mat,fragment);
+  fragment=carResponse.fragment;
   mat.shaderPath={...path,fragmentSource:fragment};
   for(const uniform of ['contact0','contact1','contact2','contactYaw','contactReceiver']) {
    if(!mat.options.uniforms.includes(uniform)) mat.options.uniforms.push(uniform);
@@ -102,6 +105,7 @@ export function installCelSurfaceDetails(view) {
    // Runs after the converter's live-source binding. Never use a stale copy of
    // paint colour; race resets replace albedoColor, brake lights mutate in place.
    if(paint&&mat.albedoColor) effect.setColor3('baseColor',mat.albedoColor);
+   carResponse.bind?.(effect);
    contacts.forEach((contact,i)=>effect.setFloat4('contact'+i,contact.x,contact.y,contact.z,contact.w));
    effect.setVector3('contactYaw',yaw);effect.setFloat('contactReceiver',+receiver(mesh));
   });

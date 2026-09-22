@@ -2,8 +2,17 @@
 const clamp=(n,lo,hi)=>Math.max(lo,Math.min(hi,n));
 const TAU=Math.PI*2;
 export const shortestAngle=(a,b)=>((b-a+Math.PI)%TAU+TAU)%TAU-Math.PI;
-const fields=['x','y','z','yaw','pitch','roll','vx','vz','speed','steer','throttle','brake','steeringAngle','driftAngle','slip','yawRate'];
-const copyPose=car=>Object.fromEntries(fields.map(key=>[key,Number.isFinite(car[key])?car[key]:0]));
+const scalarFields=['x','y','z','yaw','pitch','roll','vx','vz','speed','steer','throttle','brake','steeringAngle','driftAngle','slip','yawRate','bodyHeave','bodyPitch','bodyRoll','verticalG','roughness'];
+const wheelFields=['wheelLoad','wheelSlip','wheelSpin','suspension'];
+const wheelCount=4;
+const finite=(value,fallback=0)=>Number.isFinite(value)?value:fallback;
+const wheelArray=(car,key,fallback=0)=>Array.from({length:wheelCount},(_,i)=>finite(Array.isArray(car?.[key])?car[key][i]:undefined,fallback));
+const contactArray=car=>Array.from({length:wheelCount},(_,i)=>['asphalt','curb','grass','dirt'].includes(car?.wheelContact?.[i])?car.wheelContact[i]:'asphalt');
+const copyPose=car=>{
+ const pose=Object.fromEntries(scalarFields.map(key=>[key,finite(car?.[key],key==='verticalG'?1:0)]));
+ for(const key of wheelFields)pose[key]=wheelArray(car,key,key==='wheelLoad'?1:0);
+ pose.wheelContact=contactArray(car);return pose;
+};
 const capture=car=>({...copyPose(car),repairCooldown:car.repairCooldown||0});
 const poses=cars=>cars.map(capture);
 
@@ -13,7 +22,7 @@ export class RenderMotion {
  reset(race,now){
   this.race=race;this.phase=race.phase;this.lastWall=this.received=now;
   this.frames=[{time:race.time,cars:poses(race.cars)}];this.cursor=race.time-this.delay;
-  this.display=race.cars.map(car=>({...car}));this.resetCamera=true;return this.display;
+  this.display=race.cars.map(car=>({...car,...copyPose(car)}));this.resetCamera=true;return this.display;
  }
  sample(race,now){
   this.resetCamera=false;
@@ -27,7 +36,7 @@ export class RenderMotion {
   if(race.phase!=='racing'){
    if(this.phase!==race.phase)this.resetCamera=true;
    this.phase=race.phase;this.received=now;this.cursor=race.time-this.delay;
-   this.frames=[{time:race.time,cars:poses(race.cars)}];this.display=race.cars.map(car=>({...car}));return this.display;
+   this.frames=[{time:race.time,cars:poses(race.cars)}];this.display=race.cars.map(car=>({...car,...copyPose(car)}));return this.display;
   }
   if(this.phase!=='racing'){
    // Resume from the frozen visual pose and blend into fresh simulation snapshots.
@@ -63,7 +72,9 @@ export class RenderMotion {
   const span=after.time-before.time,alpha=span>0?clamp((this.cursor-before.time)/span,0,1):1;
   this.display=race.cars.map((car,i)=>{
    const result={...car},a=before.cars[i],b=after.cars[i];
-   for(const key of fields)result[key]=key==='yaw'?a.yaw+shortestAngle(a.yaw,b.yaw)*alpha:a[key]+(b[key]-a[key])*alpha;
+   for(const key of scalarFields)result[key]=key==='yaw'?a.yaw+shortestAngle(a.yaw,b.yaw)*alpha:a[key]+(b[key]-a[key])*alpha;
+   for(const key of wheelFields)result[key]=Array.from({length:wheelCount},(_,j)=>a[key][j]+(b[key][j]-a[key][j])*alpha);
+   result.wheelContact=Array.from({length:wheelCount},(_,j)=>alpha<.5?a.wheelContact[j]:b.wheelContact[j]);
    return result;
   });
   return this.display;
@@ -73,14 +84,29 @@ export class RenderMotion {
 // Smooth the camera's relative offsets, not its world-space position. Both the
 // camera and its target follow the same interpolated anchor on every frame.
 export class FollowCamera {
- constructor(){this.offset=null;this.look=null;}
- update(anchor,offset,look,dt,snap=false){
+ constructor(){this.offset=null;this.look=null;this.body={heave:0,heaveV:0,pitch:0,pitchV:0,roll:0,rollV:0,phase:0,shakeX:0,shakeY:0};}
+ spring(key,velocityKey,target,dt,stiffness=34,damping=10){
+  const body=this.body;body[velocityKey]+=(target-body[key])*stiffness*dt;body[velocityKey]*=Math.exp(-damping*dt);body[key]+=body[velocityKey]*dt;
+ }
+ update(anchor,offset,look,dt,snap=false,options={}){
   if(!this.offset||snap){this.offset={...offset};this.look={...look};}
   else{
    const blend=1-Math.exp(-10*clamp(dt,0,.25));
    for(const key of ['x','y','z']){this.offset[key]+=(offset[key]-this.offset[key])*blend;this.look[key]+=(look[key]-this.look[key])*blend;}
   }
-  const anchorY=Number.isFinite(anchor?.y)?anchor.y:0;
-  return{position:{x:anchor.x+this.offset.x,y:anchorY+this.offset.y,z:anchor.z+this.offset.z},target:{x:anchor.x+this.look.x,y:anchorY+this.look.y,z:anchor.z+this.look.z}};
+  const reduced=!!options.reducedMotion,body=this.body,speed=Math.max(0,anchor?.speed||0),verticalG=finite(anchor?.verticalG,1),roughness=clamp(finite(anchor?.roughness,0),0,1);
+  const lateral=clamp((anchor?.yawRate||0)*clamp(speed/110,0,1),-.18,.18),targetHeave=finite(anchor?.bodyHeave,0)*.55+clamp(verticalG-1,-1.4,2.2)*(reduced?.035:.16),targetPitch=finite(anchor?.bodyPitch,0)*.55,targetRoll=finite(anchor?.bodyRoll,0)*.6+lateral*.45;
+  if(snap){Object.assign(body,{heave:targetHeave,heaveV:0,pitch:targetPitch,pitchV:0,roll:targetRoll,rollV:0,shakeX:0,shakeY:0});}
+  else if(dt>0){this.spring('heave','heaveV',targetHeave,dt);this.spring('pitch','pitchV',targetPitch,dt);this.spring('roll','rollV',targetRoll,dt);}
+  if(dt>0){const amp=roughness*clamp(speed/120,0,1)*(reduced?.018:.08);body.phase+=dt*(22+speed*.07);body.shakeX=Math.sin(body.phase*1.7)*amp*.45;body.shakeY=Math.cos(body.phase*2.3)*amp;}
+  const anchorY=Number.isFinite(anchor?.y)?anchor.y:0,yaw=anchor?.yaw||0,sideX=Math.cos(yaw),sideZ=-Math.sin(yaw),horizontal=Math.hypot(this.offset.x,this.offset.z)||1,pullBack=clamp((finite(anchor?.throttle,0)-finite(anchor?.brake,0))*.22*clamp(speed/80,0,1),-.08,.22);
+  const physicalOffset={...this.offset},physicalLook={...this.look};
+  physicalOffset.x+=this.offset.x/horizontal*pullBack+sideX*(-body.roll+body.shakeX);
+  physicalOffset.y+=body.heave+body.shakeY;
+  physicalOffset.z+=this.offset.z/horizontal*pullBack+sideZ*(-body.roll+body.shakeX);
+  physicalLook.x+=sideX*body.roll*.28;
+  physicalLook.y+=body.heave*.25-body.pitch*.9;
+  physicalLook.z+=sideZ*body.roll*.28;
+  return{position:{x:anchor.x+physicalOffset.x,y:anchorY+physicalOffset.y,z:anchor.z+physicalOffset.z},target:{x:anchor.x+physicalLook.x,y:anchorY+physicalLook.y,z:anchor.z+physicalLook.z}};
  }
 }

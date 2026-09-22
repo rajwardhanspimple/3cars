@@ -1,5 +1,5 @@
 import {CIRCUIT, trackBounds as computeTrackBounds} from './circuit.js';
-import {mountainLayout,roadPose} from './mountain-layout.js';
+import {mountainLayout,roadPose,surfaceRoughness} from './mountain-layout.js';
 
 export const TAU = Math.PI * 2;
 export const LAPS = 5;
@@ -33,6 +33,33 @@ const ramp = (lo,hi,value) => {const t=clamp((value-lo)/(hi-lo),0,1);return t*t*
 const maxSteerFor = speed => 0.52 / (1 + Math.max(0, speed) * 0.012);
 const carRadius = 1.9;
 const inertiaPerMass = car => car.model.wheelbase ** 2 * .55;
+
+// All arrays: frontLeft, frontRight, rearLeft, rearRight. Low effective roll
+// centre preserves arcade handling under the existing enhanced lateral grip.
+export const CHASSIS=Object.freeze({comHeight:.18,trackWidth:1.64,wheelRadius:.34,springRate:196,dampingRate:20,travel:.12});
+const staticShare=[.26,.26,.24,.24];
+const surfaceMu={asphalt:1,curb:.9,grass:.47,dirt:.40};
+export function wheelLoads(car,longitudinalAcceleration,lateralAcceleration){
+  const longitudinal=longitudinalAcceleration*CHASSIS.comHeight/(9.81*car.model.wheelbase);
+  const lateral=lateralAcceleration*CHASSIS.comHeight/(9.81*CHASSIS.trackWidth);
+  const front=.52-longitudinal,rear=.48+longitudinal;
+  // Positive lateral acceleration is a right turn, so left wheels are outside.
+  const shares=[front/2+lateral*.52,front/2-lateral*.52,rear/2+lateral*.48,rear/2-lateral*.48].map(n=>Math.max(0,n));
+  const total=shares.reduce((a,b)=>a+b,0);
+  return shares.map((share,i)=>share/total/staticShare[i]);
+}
+export function tireLateralAcceleration(mu,stiffness,slip,grip,load,share){
+  // Concave load sensitivity: doubling one tire's load cannot replace two
+  // equally loaded tires. A wheel at zero load contributes exactly zero force.
+  const loaded=Math.max(0,load)**.98;
+  const limit=mu*9.81*share*loaded*grip;
+  return -clamp(mu*stiffness*share*loaded*slip,-limit,limit);
+}
+function resetChassis(car){
+  car.wheelLoad=[1,1,1,1];car.wheelSlip=[0,0,0,0];car.wheelSpin=[0,0,0,0];car.wheelContact=['asphalt','asphalt','asphalt','asphalt'];
+  car.suspension=[0,0,0,0];car.bodyHeave=0;car.bodyPitch=0;car.bodyRoll=0;car.verticalG=0;car.roughness=0;
+  car.chassis={height:[0,0,0,0],velocity:[0,0,0,0],road:[0,0,0,0],ax:0,ay:0};
+}
 
 export function makeTrack() {
   const controls = CIRCUIT.controls;
@@ -88,10 +115,11 @@ function measureVelocity(car) {
 }
 function createCar(model,index,track) {
   const progress=-10-index*7, p=track.at(progress,(index%2 ? -1 : 1)*2.2);
-  return applyRoadPose({model,index,name:index===0?'You':index===1?'Mara':'Ellis',x:p.x,z:p.z,yaw:p.heading,vx:0,vz:0,speed:0,forwardSpeed:0,lateralSpeed:0,reversing:false,steer:0,steerTarget:0,steerReversing:false,throttle:0,brake:0,yawRate:0,gear:1,rpm:900,slip:0,tc:false,abs:false,
+  const car={model,index,name:index===0?'You':index===1?'Mara':'Ellis',x:p.x,z:p.z,yaw:p.heading,vx:0,vz:0,speed:0,forwardSpeed:0,lateralSpeed:0,reversing:false,steer:0,steerTarget:0,steerReversing:false,throttle:0,brake:0,yawRate:0,gear:1,rpm:900,slip:0,tc:false,abs:false,
     nitro:100,nitroCooldown:0,boostActive:false,drifting:false,driftAngle:0,handbrake:false,steeringAngle:0,surface:'asphalt',frontSlipAngle:0,rearSlipAngle:0,
     progress,previousS:p.s,hint:p.index,nextGate:0,lap:1,lapStart:null,lapTimes:[],lapValid:true,bestLap:null,finished:false,finishTime:null,penalty:0,damage:{engine:0,steering:0,tires:0},offTime:0,offStart:0,offPenalized:false,impact:0,impactCooldown:0,stuckTime:0,repairCooldown:0,notification:'',noticeUntil:0,
-    aiDrift:{active:false,hold:0,cooldown:index===1?.35:.95,recover:0,side:0}});
+    aiDrift:{active:false,hold:0,cooldown:index===1?.35:.95,recover:0,side:0}};
+  resetChassis(car);return applyRoadPose(car);
 }
 
 export class Race {
@@ -99,11 +127,13 @@ export class Race {
     this.track=makeTrack(); this.layout=mountainLayout(this.track); this.props=this.layout.props.map(p=>({...p})); this.weather=weather==='wet'?'wet':'dry'; this.time=0; this.phase='menu'; this.countdown=3; this.firstFinish=null; this.pausedPhase=null;
     const selected=CARS.find(c=>c.id===carId)||CARS[0];
     this.cars=[selected,...CARS.filter(c=>c!==selected)].map((c,i)=>createCar(c,i,this.track)); this.player=this.cars[0];
+    this.cars.forEach(car=>this.sampleWheels(car));
   }
   start() { if(this.phase==='menu') this.phase='countdown'; }
   stopTransient(car, cooldown=false) {
     if(cooldown&&car.boostActive) car.nitroCooldown=ARCADE.nitroCooldown;
     car.boostActive=false;car.handbrake=false;measureVelocity(car);
+    if(car.finished){car.wheelSpin.fill(0);car.wheelSlip.fill(0);}
     if(car.aiDrift) {car.aiDrift.active=false;car.aiDrift.hold=0;car.aiDrift.recover=Math.max(car.aiDrift.recover,.4);}
   }
   pause() {
@@ -121,7 +151,67 @@ export class Race {
     car.x=p.x;car.z=p.z;car.yaw=p.heading;car.vx=0;car.vz=0;car.speed=0;car.forwardSpeed=0;car.lateralSpeed=0;car.reversing=false;car.steer=0;car.steerTarget=0;car.steerReversing=false;car.yawRate=0;car.progress=safe;car.previousS=p.s;car.hint=p.index;car.offTime=0;car.offPenalized=false;car.stuckTime=0;car.repairCooldown=3;
     car.boostActive=false;car.drifting=false;car.driftAngle=0;car.handbrake=false;car.steeringAngle=0;car.frontSlipAngle=0;car.rearSlipAngle=0;if(car.aiDrift){car.aiDrift.active=false;car.aiDrift.hold=0;car.aiDrift.cooldown=Math.max(car.aiDrift.cooldown,2);car.aiDrift.recover=1;}if(interruptedBoost) car.nitroCooldown=ARCADE.nitroCooldown;
     if(kind==='repair') car.damage={engine:0,steering:0,tires:0};
+    resetChassis(car);this.sampleWheels(car);
     applyRoadPose(car);this.penalty(car,PENALTIES.repair,'Repaired and returned'); return true;
+  }
+
+  sampleWheels(car){
+    const sy=Math.sin(car.yaw),cy=Math.cos(car.yaw),a=car.model.wheelbase*.48,b=car.model.wheelbase*.52;
+    let roughness=0;
+    for(let i=0;i<4;i++){
+      const along=i<2?a:-b,right=(i%2===0?-1:1)*CHASSIS.trackWidth/2;
+      const x=car.x+sy*along+cy*right,z=car.z+cy*along-sy*right;
+      const p=this.track.project(x,z,car.hint),d=p.distance;
+      const surface=d<=HALF_WIDTH?'asphalt':d<=HALF_WIDTH+.45?'curb':d<=HALF_WIDTH+4?'grass':'dirt';
+      car.wheelContact[i]=surface;
+      const road=surfaceRoughness(x,z,surface);
+      car.chassis.road[i]=road.height;roughness+=road.roughness/4;
+    }
+    car.roughness=roughness;
+  }
+  updateSuspension(car,dt,ax=car.chassis.ax,ay=car.chassis.ay){
+    const state=car.chassis,loads=wheelLoads(car,ax,ay);
+    let heave=0,verticalAcceleration=0;
+    const n=Math.ceil(dt*240),h=dt/n;
+    for(let step=0;step<n;step++){
+      heave=0;verticalAcceleration=0;
+      for(let i=0;i<4;i++){
+        const compression=state.road[i]-state.height[i];
+        const acceleration=CHASSIS.springRate*compression-CHASSIS.dampingRate*state.velocity[i]-9.81*(loads[i]-1);
+        state.velocity[i]+=acceleration*h;state.height[i]+=state.velocity[i]*h;
+        // Bump/rebound stops are physical suspension travel, not angle clamps.
+        const travel=state.road[i]-state.height[i];
+        if(Math.abs(travel)>CHASSIS.travel){state.height[i]=state.road[i]-Math.sign(travel)*CHASSIS.travel;state.velocity[i]=0;}
+        car.suspension[i]=state.road[i]-state.height[i];
+        car.wheelLoad[i]=car.suspension[i]<=-CHASSIS.travel?0:loads[i];
+        heave+=state.height[i]*staticShare[i];verticalAcceleration+=acceleration*staticShare[i];
+      }
+    }
+    car.bodyHeave=heave;
+    const front=(state.height[0]+state.height[1])/2,rear=(state.height[2]+state.height[3])/2;
+    car.bodyPitch=-Math.atan2(front-rear,car.model.wheelbase);
+    car.bodyRoll=Math.atan2((state.height[1]+state.height[3]-state.height[0]-state.height[2])/2,CHASSIS.trackWidth);
+    car.verticalG=verticalAcceleration/9.81;
+  }
+  updateWheelSpin(car,dt,u,v,drive,braking,mu){
+    const a=car.model.wheelbase*.48,b=car.model.wheelbase*.52;
+    for(let i=0;i<4;i++){
+      const front=i<2,along=front?a:-b,right=(i%2===0?-1:1)*CHASSIS.trackWidth/2;
+      const wheel=front?car.steeringAngle:0;
+      const rolling=(u-car.yawRate*right)*Math.cos(wheel)+(v+car.yawRate*along)*Math.sin(wheel);
+      const capacity=mu*9.81*surfaceMu[car.wheelContact[i]]*Math.max(0,car.wheelLoad[i])**.98;
+      const locked=(!car.reversing&&car.brake>.98&&Math.abs(rolling)>2)||(!front&&car.handbrake);
+      const excess=front?0:Math.max(0,drive*2-capacity);
+      let target=rolling/CHASSIS.wheelRadius;
+      if(!front&&excess>0)target+=Math.sign(u||1)*excess*2;
+      if(locked)target=0;
+      car.wheelSpin[i]=smooth(car.wheelSpin[i],target,locked?60:35,dt);
+      if(locked&&Math.abs(car.wheelSpin[i])<.05)car.wheelSpin[i]=0;
+      const slip=front?car.frontSlipAngle:car.rearSlipAngle;
+      const lateral=Math.abs(slip)*(front?65:70)/(9.81*Math.max(.02,car.wheelLoad[i]));
+      const longitudinal=Math.abs(car.wheelSpin[i]*CHASSIS.wheelRadius-rolling)/Math.max(Math.abs(rolling),1);
+      car.wheelSlip[i]=Math.hypot(lateral,longitudinal);
+    }
   }
 
   ai(car,dt=1/30) {
@@ -181,6 +271,7 @@ export class Race {
   step(dt,input={}) {
     if(!Number.isFinite(dt)||dt<=0) return;
     dt=Math.min(dt,1/30);
+    if(dt>1/120+1e-10){const n=Math.ceil(dt*120);for(let i=0;i<n;i++)this.step(dt/n,input);return;}
     if(this.phase==='countdown') {this.cars.forEach(c=>this.stopTransient(c,false));this.countdown-=dt;if(this.countdown<=0)this.phase='racing';return;}
     if(this.phase!=='racing') {this.cars.forEach(c=>this.stopTransient(c,false));return;}
     this.time+=dt;this.updateProps(dt);
@@ -214,11 +305,11 @@ export class Race {
     car.handbrake=!!input.handbrake;
     const contact=this.track.project(car.x,car.z,car.hint),off=contact.distance>HALF_WIDTH;
     car.surface=off?(contact.distance>HALF_WIDTH+4?'dirt':'grass'):'asphalt';
+    this.sampleWheels(car);
     measureVelocity(car);
     const forwardSpeed=Math.max(0,car.forwardSpeed);
     const weatherGrip=this.weather==='wet'?.66:1;
-    const surfaceGrip=car.surface==='asphalt'?1:(car.surface==='grass'?.47:.40);
-    const baseGrip=car.model.grip*weatherGrip*surfaceGrip*(1-car.damage.tires*.4);
+    const baseGrip=car.model.grip*weatherGrip*(1-car.damage.tires*.4);
     const boostHeld=!!input.boost,wasBoost=car.boostActive;
     car.boostActive=this.phase==='racing'&&boostHeld&&car.throttle>.2&&forwardSpeed>=4&&car.brake<.1&&!car.handbrake&&car.nitro>0;
     if(car.boostActive) {car.nitro=clamp(car.nitro-ARCADE.nitroDrain*dt,0,100);if(car.nitro===0) {car.boostActive=false;car.nitroCooldown=ARCADE.nitroCooldown;}}
@@ -232,8 +323,10 @@ export class Race {
     for(let i=0;i<count;i++) {
       const sy=Math.sin(car.yaw),cy=Math.cos(car.yaw);
       let u=car.vx*sy+car.vz*cy,v=car.vx*cy-car.vz*sy;
+      this.updateSuspension(car,h);
       const speed=Math.abs(u),downforce=1+Math.min(.30,speed*speed*.00007);
-      const traction=baseGrip*9.81*downforce,mu=baseGrip*ARCADE.gripBoost*downforce;
+      const tireGrip=car.wheelLoad.reduce((sum,load,j)=>sum+staticShare[j]*Math.max(0,load)**.98*surfaceMu[car.wheelContact[j]],0);
+      const traction=baseGrip*9.81*downforce*tireGrip,mu=baseGrip*ARCADE.gripBoost*downforce;
       const wheel=car.steer*maxSteerFor(speed)*(1-car.damage.steering*.4)+Math.sin(this.time*1.6)*car.damage.steering*.016;
       car.steeringAngle=wheel;
       const denominator=Math.max(speed,3),direction=clamp(u/3,-1,1);
@@ -248,12 +341,11 @@ export class Race {
       // body sideslip are present. Counter-steer restores front tire adhesion.
       const sliding=car.handbrake?ramp(.18,.35,bodySlip):0;
       const frontGrip=1-.60*sliding*ramp(.50,.90,Math.abs(frontSlip));
-      const frontLimit=mu*9.81*.52*frontGrip,rearLimit=mu*9.81*.48*rearGrip;
       // High-speed rear cornering stiffness resists transient oversteer without
       // reducing front steering authority or increasing the friction ceiling.
       const fastGrip=car.handbrake?0:ramp(40,60,speed);
-      const front=-clamp(mu*65*.52*frontSlip,-frontLimit,frontLimit);
-      const rear=-clamp(mu*70*(1+.45*fastGrip)*.48*rearSlip,-rearLimit,rearLimit);
+      const tireForce=j=>tireLateralAcceleration(mu*surfaceMu[car.wheelContact[j]],j<2?65:70*(1+.45*fastGrip),j<2?frontSlip:rearSlip,j<2?frontGrip:rearGrip,car.wheelLoad[j],staticShare[j]);
+      const front=tireForce(0)+tireForce(1),rear=tireForce(2)+tireForce(3);
       const frontLateral=front*Math.cos(wheel);
       car.frontSlipAngle=frontSlip;car.rearSlipAngle=rearSlip;
       const drive=car.model.acceleration*car.throttle*(1-car.damage.engine*.55)/(1+speed*.018);
@@ -267,6 +359,8 @@ export class Race {
       // Resistive forces cannot reverse motion. Brake-to-reverse uses motor torque.
       const drag=Math.sign(u)*Math.min(resist,speed/h);
       const ax=motor-drag-front*Math.sin(wheel),ay=frontLateral+rear;
+      car.chassis.ax=ax;car.chassis.ay=ay;
+      this.updateWheelSpin(car,h,u,v,drive,braking,baseGrip*downforce);
       // Lower initial handbrake damping quickens onset. At large slip the
       // previous 2.8/s damping ceiling remains, while release recovery is intact.
       const yawDamping=car.handbrake?.35+2.45*ramp(.18,.65,bodySlip):1.6+1.8*fastGrip+3*ramp(.12,.50,bodySlip);

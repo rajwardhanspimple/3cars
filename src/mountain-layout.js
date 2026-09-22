@@ -5,6 +5,19 @@ export function roadPose(x,z,yaw=0){
   const dx=.032*Math.cos(x*.008),dz=.035;
   return {y:roadHeight(x,z),pitch:-Math.atan(dx*Math.sin(yaw)+dz*Math.cos(yaw)),roll:Math.atan(dx*Math.cos(yaw)-dz*Math.sin(yaw))};
 }
+// Shared sampling API. height is an OFFSET in metres, not an absolute height.
+// Render road vertices at roadHeight(x,z) + surfaceRoughness(x,z,surface).height.
+// Keep roadPose analytic: chassis motion is published separately by the simulation.
+export function surfaceRoughness(x,z,surface='asphalt'){
+  const grain=.0012*Math.sin(x*3.7+z*2.1)+.0008*Math.sin(x*7.1-z*4.3);
+  const seam=Math.pow(Math.max(0,Math.cos(x*.23+z*.17)),32);
+  const patch=Math.pow(Math.max(0,Math.sin(x*.031-z*.047)),8);
+  const asphalt=grain+.004*seam+.003*patch*Math.sin(x*.91+z*.63);
+  const coarse=.009*Math.sin(x*.73+z*.39)+.006*Math.sin(x*1.13-z*.87);
+  if(surface==='curb')return{height:asphalt+.009*(1+Math.sin(x*5+z*3)),roughness:.65};
+  if(surface==='grass'||surface==='dirt')return{height:asphalt+coarse,roughness:Math.min(1,.55+Math.abs(coarse)*20)};
+  return{height:asphalt,roughness:Math.min(1,.08+.12*seam+.10*patch+Math.abs(grain)*20)};
+}
 export function mountainLayout(track){
   const trees=[],props=[],walls=[];let seed=2309;
   const rnd=()=>{seed=(1664525*seed+1013904223)>>>0;return seed/4294967296;};

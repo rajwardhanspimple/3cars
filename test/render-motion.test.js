@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {RenderMotion,FollowCamera,shortestAngle} from '../src/render-motion.js';
 const near=(actual,expected,tolerance=1e-7)=>assert.ok(Math.abs(actual-expected)<=tolerance,`${actual} != ${expected}`);
-const makeRace=()=>({phase:'racing',time:0,cars:[0,1,2].map(index=>({index,x:0,z:index*4,yaw:0,vx:30,vz:0,speed:30,steer:0,steeringAngle:0,driftAngle:0,throttle:1,brake:0,slip:0,yawRate:0,repairCooldown:0,boostActive:false,drifting:false}))});
+const makeRace=()=>({phase:'racing',time:0,cars:[0,1,2].map(index=>({index,x:0,y:0,z:index*4,yaw:0,pitch:0,roll:0,vx:30,vz:0,speed:30,steer:0,steeringAngle:0,driftAngle:0,throttle:1,brake:0,slip:0,yawRate:0,repairCooldown:0,boostActive:false,drifting:false}))});
 function snapshot(race,time){race.time=time;for(const car of race.cars)car.x=time*30;}
 
 for(const fps of [60,120])for(const tick of [1/30,1/25])test(`${Math.round(1/tick)} Hz snapshots interpolate at ${fps} FPS without stop-start motion`,()=>{
@@ -64,6 +64,12 @@ test('camera and look target translate with the same rendered car anchor',()=>{
  }
 });
 
+test('camera height follows the rendered anchor elevation',()=>{
+ const camera=new FollowCamera(),result=camera.update({x:2,y:5,z:3},{x:1,y:4,z:-6},{x:2,y:1,z:7},1/60,true);
+ near(result.position.x,3);near(result.position.y,9);near(result.position.z,-3);
+ near(result.target.x,4);near(result.target.y,6);near(result.target.z,10);
+});
+
 test('camera smooths steering look changes, freezes at zero dt, and snaps after reset',()=>{
  const camera=new FollowCamera(),anchor={x:0,z:0},offset={x:0,y:4,z:-10};camera.update(anchor,offset,{x:0,y:1,z:8},0);
  const result=camera.update(anchor,offset,{x:3,y:1,z:8},1/60);assert.ok(result.target.x>0&&result.target.x<1);
@@ -74,4 +80,12 @@ test('camera smooths steering look changes, freezes at zero dt, and snaps after 
 test('camera damping is independent of render frame rate',()=>{
  const run=fps=>{const c=new FollowCamera(),a={x:0,z:0},o={x:0,y:4,z:-10};c.update(a,o,{x:0,y:1,z:8},0);let result;for(let i=0;i<fps;i++)result=c.update(a,o,{x:3,y:1,z:8},1/fps);return result;};
  near(run(30).target.x,run(120).target.x);
+});
+
+test('y, pitch, and roll interpolate uphill and freeze while paused',()=>{
+ const race=makeRace(),motion=new RenderMotion();motion.sample(race,0);
+ snapshot(race,.04);Object.assign(race.cars[0],{y:4,pitch:.4,roll:.2});motion.sample(race,40);
+ const climbing=motion.sample(race,60)[0];near(climbing.y,1);near(climbing.pitch,.1);near(climbing.roll,.05);
+ race.phase='paused';Object.assign(race.cars[0],{y:9,pitch:.9,roll:.45});
+ const frozen=motion.sample(race,60000)[0];near(frozen.y,1);near(frozen.pitch,.1);near(frozen.roll,.05);
 });

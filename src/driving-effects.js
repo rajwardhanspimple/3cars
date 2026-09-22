@@ -1,3 +1,5 @@
+import {roadHeight,roadPose} from './mountain-layout.js';
+
 const B=globalThis.BABYLON;
 const clamp=(n,lo,hi)=>Math.max(lo,Math.min(hi,n));
 
@@ -12,6 +14,12 @@ function makeSmokeTexture(scene){
  ctx.putImageData(image,0,0);texture.update();return texture;
 }
 
+function surfaceNormal(yaw,pitch,roll){
+ const rotation=B.Quaternion.FromEulerAngles(pitch,yaw,roll),matrix=B.Matrix.Identity();
+ rotation.toRotationMatrix(matrix);
+ return B.Vector3.TransformNormal(B.Axis.Y,matrix).normalize();
+}
+
 export class DrivingEffects{
  constructor(scene,{reducedMotion=false}={}){
   this.scene=scene;this.reducedMotion=reducedMotion;this.disposed=false;this.smokeIndex=0;this.skidIndex=0;this.emitClock=0;this.carStates=[];this.flames=[];
@@ -20,7 +28,7 @@ export class DrivingEffects{
   this.skidMaterial=new B.StandardMaterial('skid-mark-material',scene);this.skidMaterial.diffuseColor=new B.Color3(.015,.014,.012);this.skidMaterial.alpha=.36;this.skidMaterial.specularColor=B.Color3.Black();this.skidMaterial.transparencyMode=B.Material.MATERIAL_ALPHABLEND;
   this.flameMaterial=new B.StandardMaterial('boost-flame-material',scene);this.flameMaterial.emissiveColor=new B.Color3(.14,.42,1);this.flameMaterial.diffuseColor=new B.Color3(.05,.18,.9);this.flameMaterial.alpha=.46;this.flameMaterial.specularColor=B.Color3.Black();this.flameMaterial.transparencyMode=B.Material.MATERIAL_ALPHABLEND;
   this.smoke=Array.from({length:this.smokeCount},(_,i)=>{const mesh=B.MeshBuilder.CreatePlane(`tire-smoke-${i}`,{size:1},scene);mesh.material=this.smokeMaterial;mesh.billboardMode=B.Mesh.BILLBOARDMODE_ALL;mesh.isPickable=false;mesh.setEnabled(false);return{mesh,life:0,age:0,x:0,y:0,z:0,rise:0,scale:1};});
-  this.skids=Array.from({length:this.skidCount},(_,i)=>{const mesh=B.MeshBuilder.CreatePlane(`skid-mark-${i}`,{width:.28,height:1.15},scene);mesh.material=this.skidMaterial;mesh.rotation.x=Math.PI/2;mesh.position.y=.032;mesh.isPickable=false;mesh.setEnabled(false);return mesh;});
+  this.skids=Array.from({length:this.skidCount},(_,i)=>{const mesh=B.MeshBuilder.CreatePlane(`skid-mark-${i}`,{width:.28,height:1.15},scene);mesh.material=this.skidMaterial;mesh.rotation.x=Math.PI/2;mesh.isPickable=false;mesh.setEnabled(false);return mesh;});
   this.updateMetadata();
  }
  setCarNodes(nodes){
@@ -57,11 +65,11 @@ export class DrivingEffects{
  }
  emitSmoke(car,slip){
   const yaw=car.yaw||0,backX=-Math.sin(yaw),backZ=-Math.cos(yaw),sideX=Math.cos(yaw),sideZ=-Math.sin(yaw),amount=this.reducedMotion?1:2;
-  for(let n=0;n<amount;n++)for(const side of[-1,1]){const item=this.smoke[this.smokeIndex++%this.smoke.length],jitter=((this.smokeIndex*17)%11-5)*.018;item.x=car.x+backX*1.45+sideX*(side*.82+jitter);item.z=car.z+backZ*1.45+sideZ*(side*.82-jitter);item.y=.18;item.life=.62+slip*.38;item.age=0;item.rise=.42+slip*.18;item.scale=.36+slip*.32;item.mesh.position.set(item.x,item.y,item.z);item.mesh.scaling.set(item.scale,item.scale,item.scale);item.mesh.visibility=.38;item.mesh.setEnabled(true);}
+  for(let n=0;n<amount;n++)for(const side of[-1,1]){const item=this.smoke[this.smokeIndex++%this.smoke.length],jitter=((this.smokeIndex*17)%11-5)*.018;item.x=car.x+backX*1.45+sideX*(side*.82+jitter);item.z=car.z+backZ*1.45+sideZ*(side*.82-jitter);item.y=roadHeight(item.x,item.z)+.18;item.life=.62+slip*.38;item.age=0;item.rise=.42+slip*.18;item.scale=.36+slip*.32;item.mesh.position.set(item.x,item.y,item.z);item.mesh.scaling.set(item.scale,item.scale,item.scale);item.mesh.visibility=.38;item.mesh.setEnabled(true);}
  }
  placeSkid(car,state,dx,dz,dist){
   const heading=Math.atan2(dx,dz),yaw=car.yaw||0,sideX=Math.cos(yaw),sideZ=-Math.sin(yaw),length=clamp(dist,.8,2.8);
-  for(const side of[-1,1]){const mark=this.skids[this.skidIndex++%this.skids.length];mark.position.x=(car.x+state.lastSkidX)*.5+sideX*side*.82;mark.position.z=(car.z+state.lastSkidZ)*.5+sideZ*side*.82;mark.position.y=.034;mark.rotation.y=heading;mark.scaling.y=length/1.15;mark.visibility=.26+clamp(car.slip||0,0,1)*.18;mark.setEnabled(true);}
+  for(const side of[-1,1]){const mark=this.skids[this.skidIndex++%this.skids.length],x=(car.x+state.lastSkidX)*.5+sideX*side*.82,z=(car.z+state.lastSkidZ)*.5+sideZ*side*.82,surface=roadPose(x,z,heading),normal=surfaceNormal(heading,surface.pitch,surface.roll);mark.position.x=x+normal.x*.034;mark.position.y=surface.y+normal.y*.034;mark.position.z=z+normal.z*.034;mark.rotationQuaternion=B.Quaternion.FromEulerAngles(Math.PI/2+surface.pitch,heading,surface.roll);mark.scaling.y=length/1.15;mark.visibility=.26+clamp(car.slip||0,0,1)*.18;mark.setEnabled(true);}
  }
  stop(){for(const item of this.smoke){item.life=0;item.mesh.setEnabled(false);}for(const pair of this.flames)for(const mesh of pair)mesh.setEnabled(false);this.updateMetadata();}
  updateMetadata(){this.scene.metadata={...this.scene.metadata,effects:{smokePool:this.smokeCount,skidPool:this.skidCount,activeSmoke:this.smoke.filter(item=>item.life>0).length,flamePairs:this.flames.length,reducedMotion:this.reducedMotion}};}

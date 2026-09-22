@@ -2,7 +2,7 @@
 const clamp=(n,lo,hi)=>Math.max(lo,Math.min(hi,n));
 const TAU=Math.PI*2;
 export const shortestAngle=(a,b)=>((b-a+Math.PI)%TAU+TAU)%TAU-Math.PI;
-const fields=['x','z','yaw','vx','vz','speed','steer','throttle','brake','steeringAngle','driftAngle','slip','yawRate'];
+const fields=['x','y','z','yaw','pitch','roll','vx','vz','speed','steer','throttle','brake','steeringAngle','driftAngle','slip','yawRate'];
 const copyPose=car=>Object.fromEntries(fields.map(key=>[key,Number.isFinite(car[key])?car[key]:0]));
 const capture=car=>({...copyPose(car),repairCooldown:car.repairCooldown||0});
 const poses=cars=>cars.map(capture);
@@ -80,6 +80,7 @@ export class FollowCamera {
    const blend=1-Math.exp(-10*clamp(dt,0,.25));
    for(const key of ['x','y','z']){this.offset[key]+=(offset[key]-this.offset[key])*blend;this.look[key]+=(look[key]-this.look[key])*blend;}
   }
-  return{position:{x:anchor.x+this.offset.x,y:this.offset.y,z:anchor.z+this.offset.z},target:{x:anchor.x+this.look.x,y:this.look.y,z:anchor.z+this.look.z}};
+  const anchorY=Number.isFinite(anchor?.y)?anchor.y:0;
+  return{position:{x:anchor.x+this.offset.x,y:anchorY+this.offset.y,z:anchor.z+this.offset.z},target:{x:anchor.x+this.look.x,y:anchorY+this.look.y,z:anchor.z+this.look.z}};
  }
 }

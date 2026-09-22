@@ -14,6 +14,8 @@ test('countdown and keyboard boost work without any graphics frames',async({page
  await page.keyboard.down('w');await expect.poll(()=>page.locator('#speed').textContent().then(Number),{timeout:10000}).toBeGreaterThan(35);
  await page.keyboard.down('d');await page.keyboard.down('Space');await expect(page.locator('body')).toHaveAttribute('data-drifting','true',{timeout:3000});await page.keyboard.up('Space');await page.keyboard.up('d');await page.keyboard.up('w');await expect(page.locator('body')).toHaveAttribute('data-drifting','false',{timeout:3000});
  await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await expect(page.locator('#pause-panel')).toBeVisible();await expect(page.locator('body')).toHaveAttribute('data-boost','false');
+ // Synthetic blur does not cause a real focus transition when clicking the same page.
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
  await page.locator('#restart').click();await expect(page.locator('body')).toHaveAttribute('data-phase','countdown');expect(await page.locator('#nitro-meter').evaluate(el=>el.value)).toBe(100);
  const stats=await page.evaluate(()=>{const s=BABYLON.Engine.Instances.at(-1).scenes[0];return{frame:s.getFrameId(),triangles:s.getTransformNodeByName('car-0').getChildMeshes().filter(m=>m.metadata?.mustang).reduce((n,m)=>n+m.getTotalIndices()/3,0)};});expect(stats.frame).toBe(0);expect(stats.triangles).toBe(1493119);expect(errors).toEqual([]);
 });

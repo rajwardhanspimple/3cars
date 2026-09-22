@@ -69,8 +69,8 @@ export class RaceView extends CircuitView {
   const wall=nowSeconds(),wallDt=clamp(wall-(this._lastFrameTime||wall),0,.25);this._lastFrameTime=wall;
   const race=this.race,frameDt=Number.isFinite(dt)?Math.max(0,dt):wallDt;
   const stepDt=(race.phase==='paused'||race.phase==='finished')?0:clamp(frameDt,0,.1);
-  const cars=this.motion.sample(race,wall*1000),p=cars[0],playerSurface=roadPose(p.x,p.z,p.yaw),renderPlayer={...p,y:Number.isFinite(p.y)?p.y:roadHeight(p.x,p.z),pitch:playerSurface.pitch+(Number.isFinite(p.pitch)?p.pitch:0),roll:playerSurface.roll+(Number.isFinite(p.roll)?p.roll:0)};this.elapsed+=stepDt;
-  for(const car of cars){const node=this.carNodes[car.index],surface=roadPose(car.x,car.z,car.yaw),carY=Number.isFinite(car.y)?car.y:roadHeight(car.x,car.z),pitch=surface.pitch+(Number.isFinite(car.pitch)?car.pitch:0),roll=surface.roll+(Number.isFinite(car.roll)?car.roll:0);node.root.position.set(car.x,carY,car.z);node.root.rotation.x=pitch;node.root.rotation.y=car.yaw;node.root.rotation.z=roll;node.body.rotation.z=-(car.steer||0)*clamp(car.speed/80,0,.6)*.06;node.body.rotation.x=((car.brake||0)-(car.throttle||0))*.012;
+  const cars=this.motion.sample(race,wall*1000),p=cars[0],playerSurface=roadPose(p.x,p.z,p.yaw),renderPlayer={...p,y:Number.isFinite(p.y)?p.y:roadHeight(p.x,p.z),pitch:Number.isFinite(p.pitch)?p.pitch:playerSurface.pitch,roll:Number.isFinite(p.roll)?p.roll:playerSurface.roll};this.elapsed+=stepDt;
+  for(const car of cars){const node=this.carNodes[car.index],surface=roadPose(car.x,car.z,car.yaw),carY=Number.isFinite(car.y)?car.y:roadHeight(car.x,car.z),pitch=Number.isFinite(car.pitch)?car.pitch:surface.pitch,roll=Number.isFinite(car.roll)?car.roll:surface.roll;node.root.position.set(car.x,carY,car.z);node.root.rotation.x=pitch;node.root.rotation.y=car.yaw;node.root.rotation.z=roll;node.body.rotation.z=-(car.steer||0)*clamp(car.speed/80,0,.6)*.06;node.body.rotation.x=((car.brake||0)-(car.throttle||0))*.012;
    for(const wheel of node.wheels){wheel.spin.rotation.x+=car.speed*stepDt/(wheel.radius||.43);if(wheel.front)wheel.pivot.rotation.y=car.steeringAngle||0;}
    if(node.tailMaterial)node.tailMaterial.emissiveColor.set(.22+(car.brake||0)*.55,.003,.002);
   }
@@ -93,7 +93,7 @@ export class RaceView extends CircuitView {
   this.camera.fov=race.phase==='menu'?.65:(this.reducedMotion?.8:.8+clamp(speed/500,0,.12)+this._boostFov*.035);
   if(race.weather==='wet'){for(let i=0;i<this.rainLines.length;i++){const x=renderPlayer.x+Math.sin(i*127.1)*25,z=renderPlayer.z+Math.cos(i*311.7)*25,y=renderPlayer.y+(((i*.71-this.elapsed*23)%20+20)%20);this.rainLines[i][0].set(x,y,z);this.rainLines[i][1].set(x-.18,y-1.2,z+.08);}B.MeshBuilder.CreateLineSystem('rain',{lines:this.rainLines,instance:this.rain});}
   this.effects?.update(this.carNodes,cars,stepDt,race.phase);
-  this.updateScenery?.(stepDt,renderPlayer,race.phase,race.player,race.physicsProps);
+  this.updateScenery?.(stepDt,renderPlayer,race.phase);
   this.scene.render();
  }
  dispose(){if(this.disposed)return;this.effects?.dispose();this.effects=null;this.motion?.clear();this.disposed=true;this.revision=(this.revision||0)+1;super.dispose();}

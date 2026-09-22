@@ -1,5 +1,5 @@
 import { Race, CARS, LAPS, clamp } from './sim.js';
-import { RaceView } from './view.js';
+import { RaceView } from './mustang-view.js';
 import { LocalRecords } from './storage.js';
 import { RaceAudio } from './audio.js';
 const $=id=>document.getElementById(id);
@@ -13,6 +13,7 @@ function storageStatus(){text('storage-status',records.available?'Settings, best
 function persistSettings(){settings=selected();records.saveSettings(settings);storageStatus();}
 function setLoading(value,label='Loading car...'){loading=value;if(ui.setup)ui.setup.inert=value;ui.start.disabled=value;text('start',value?label:'Start five-lap race');document.body.dataset.loading=String(value);if(value){keys.clear();accumulator=0;}}
 function playerModelName(car){return car.index===0?`Ford Mustang 2015 (${car.model.name})`:car.model.name;}
+
 
 function renderHistory(){
  const rows=records.results();text('history-count',rows.length);ui['race-history'].replaceChildren();
@@ -28,6 +29,7 @@ async function initView(){
   if(token!==loadToken||disposed)return;viewReady=true;last=performance.now();setLoading(false);syncPhase();updateHUD();
  }catch(error){if(token===loadToken&&!disposed)loadError(error);}
 }
+
 async function resetRace(start=false,focusTarget=null){
  const token=++loadToken;keys.clear();accumulator=0;saved=false;viewReady=false;loadLostFocus=false;setLoading(true,start?'Loading car...':'Updating car...');ui.error.hidden=true;race=new Race(selected());
  try{
@@ -45,12 +47,14 @@ function syncPhase(){
  if(race.phase==='paused')$('resume').focus();if(race.phase==='finished'){finishRace();$('race-again').focus();}if(race.phase==='menu')renderHistory();
 }
 
+
 function finishRace(){
  const order=race.standings(),p=race.player,position=order.indexOf(p)+1;
  text('result-title',position===1?'You take the win.':'Race complete');text('result-summary',`P${position} of 3. ${LAPS} laps at Meridian in ${formatTime(p.finishTime+p.penalty)}.`);ui['result-list'].replaceChildren();
  for(const [i,c] of order.entries()){const li=document.createElement('li'),name=document.createElement('span'),right=document.createElement('span'),detail=document.createElement('small');name.textContent=`${i+1}. ${c.name}`;right.textContent=formatTime(c.finishTime+c.penalty);detail.textContent=`${playerModelName(c)} / penalties +${c.penalty}s`;name.append(detail);li.append(name,right);ui['result-list'].append(li);}
  if(!saved){saved=true;records.recordRace({carId:p.model.id,weather:race.weather,position,time:p.finishTime,penalty:p.penalty,bestLap:p.bestLap,finishedAt:new Date().toISOString()});renderHistory();}
 }
+
 
 function updateHUD(){
  const p=race.player,order=race.standings();ui.position.innerHTML=`${order.indexOf(p)+1} <small>/ 3</small>`;ui.lap.innerHTML=`${p.lap} <small>/ ${LAPS}</small>`;
@@ -63,17 +67,19 @@ function updateHUD(){
 }
 const map=ui.minimap.getContext('2d');
 
+
 function drawMap(){
  if(!map)return;const t=race.track,project=p=>[120+p.x*.55,100+p.z*.55];map.clearRect(0,0,240,195);map.lineJoin='round';map.lineCap='round';map.beginPath();t.points.forEach((p,i)=>{const[x,y]=project(p);if(i)map.lineTo(x,y);else map.moveTo(x,y);});map.closePath();map.strokeStyle='#b3c7d2';map.lineWidth=7;map.stroke();map.strokeStyle='#ffffff';map.lineWidth=2;map.stroke();
  const start=project(t.at(0));map.fillStyle='#173c56';map.fillRect(start[0]-3,start[1]-4,6,8);for(const c of [...race.cars].reverse()){const[x,y]=project(c);map.beginPath();map.arc(x,y,c.index===0?5:4,0,Math.PI*2);map.fillStyle=c.model.color;map.fill();map.strokeStyle=c.index===0?'#173c56':'#fff';map.lineWidth=2;map.stroke();}map.fillStyle='#173c56';map.font='11px Segoe UI, Arial';map.fillText('Meridian circuit',12,182);
 }
 function togglePause(){if(loading)return;keys.clear();race.pause();accumulator=0;last=performance.now();updateHUD();syncPhase();audio.update({phase:race.phase});if(race.phase!=='paused')ui['race-canvas'].focus();}
 function fail(error){console.error(error);cancelAnimationFrame(frameId);setLoading(false);ui.start.disabled=true;audio.setMuted(true);ui.menu.hidden=true;ui.hud.hidden=true;ui.error.hidden=false;text('error-message',error.message||'Unable to render the circuit. Reload or try a different browser.');document.body.dataset.phase='error';}
-function loadError(error){console.error(error);keys.clear();accumulator=0;viewReady=false;setLoading(false);ui.start.disabled=true;ui.menu.hidden=true;ui.hud.hidden=true;ui.error.hidden=false;text('error-message',error.message||'Unable to load the car model. Reload the game to try again.');document.body.dataset.phase='error';}
+function loadError(error){console.error(error);keys.clear();accumulator=0;viewReady=false;setLoading(false);ui.start.disabled=true;audio.setMuted(true);ui.menu.hidden=true;ui.hud.hidden=true;ui['pause-panel'].hidden=true;ui.results.hidden=true;ui.error.hidden=false;text('error-message',error.message||'Unable to load the car model. Reload the game to try again.');document.body.dataset.phase='error';}
 ui.setup.elements.carId.value=settings.carId;ui.weather.value=settings.weather;ui.quality.value=settings.quality;applyMute();
 ui.start.disabled=true;text('start','Loading track...');syncPhase();renderHistory();initView();
-ui.setup.addEventListener('change',async()=>{const active=document.activeElement;persistSettings();await resetRace(false,active);});
+ui.setup.addEventListener('change',async()=>{if(loading)return;const active=document.activeElement;persistSettings();await resetRace(false,active);});
 ui.setup.addEventListener('submit',event=>{event.preventDefault();if(loading)return;audio.unlock();persistSettings();resetRace(true);});ui.menu.addEventListener('pointerdown',()=>audio.unlock(),{once:true});
+
 ui.mute.addEventListener('click',()=>{audio.unlock();settings.muted=!settings.muted;records.saveSettings({muted:settings.muted});applyMute();});
 $('pause').addEventListener('click',togglePause);$('resume').addEventListener('click',togglePause);$('restart').addEventListener('click',()=>{audio.unlock();if(!loading)resetRace(true);});
 $('race-again').addEventListener('click',()=>{audio.unlock();if(!loading)resetRace(true);});$('exit').addEventListener('click',()=>{if(!loading)resetRace();});$('result-setup').addEventListener('click',()=>{if(!loading)resetRace();});
@@ -89,6 +95,7 @@ function autoPause(){keys.clear();accumulator=0;if(loading){loadLostFocus=true;a
 window.addEventListener('focus',()=>{windowFocused=true;last=performance.now();accumulator=0;});
 window.addEventListener('blur',()=>{windowFocused=false;autoPause();});document.addEventListener('visibilitychange',()=>{if(document.hidden)autoPause();last=performance.now();accumulator=0;});
 ui['race-canvas'].addEventListener('webglcontextlost',event=>{event.preventDefault();autoPause();fail(new Error('Graphics context was lost. Reload the game to continue.'));});
+
 document.addEventListener('keydown',event=>{if(event.key!=='Tab')return;const modal=[ui['pause-panel'],ui.results,ui.error].find(n=>!n.hidden);if(!modal)return;const buttons=[...modal.querySelectorAll('button')],first=buttons[0],last=buttons.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}});
 const pressed=(...codes)=>codes.some(k=>keys.has(k))?1:0;
 

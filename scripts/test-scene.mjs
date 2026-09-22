@@ -1,6 +1,5 @@
-// Direct structural runtime tests. Canvas drawing is mocked; real glTF/Draco
-// geometry, Babylon mesh construction, fleet cloning, and render transforms run.
-// This is not a GPU or visual-quality benchmark. No synthetic car fallback.
+// Structural runtime tests with actual glTF/Draco, no synthetic car fallback.
+// Canvas drawing is mocked. GPU pixels and frame rate are not tested.
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {readFile} from 'node:fs/promises';
@@ -15,7 +14,7 @@ function canvas(width=512,height=512){
 }
 globalThis.OffscreenCanvas=class{constructor(w,h){return canvas(w,h);}};
 const modelStatus={dataset:{},textContent:''};
-globalThis.document={createElement:name=>name==='canvas'?canvas():{style:{}},getElementById:id=>id==='model-status'?modelStatus:null};
+globalThis.document={addEventListener(){},removeEventListener(){},createElement:name=>name==='canvas'?canvas():{style:{}},getElementById:id=>id==='model-status'?modelStatus:null};
 const {prepareAssets}=await import('./prepare-assets.mjs');await prepareAssets();
 const source=await readFile(new URL('../assets/mustang-2015.gltf',import.meta.url),'utf8');
 const dracoURL=new URL('../node_modules/three/examples/jsm/libs/draco/gltf/draco_wasm_wrapper.js',import.meta.url);
@@ -23,12 +22,10 @@ const wasm=await readFile(new URL('../node_modules/three/examples/jsm/libs/draco
 const module={exports:{}};
 const sandbox={module,exports:module.exports,require,process,console,Buffer,WebAssembly,TextDecoder,TextEncoder,setTimeout,clearTimeout,__dirname:dirname(fileURLToPath(dracoURL)),__filename:fileURLToPath(dracoURL)};
 vm.runInNewContext(await readFile(dracoURL,'utf8'),sandbox,{filename:'draco_wasm_wrapper.cjs'});
-const factory=module.exports;
-assert.equal(typeof factory,'function','Draco module factory');
+const factory=module.exports;assert.equal(typeof factory,'function','Draco module factory');
 const originalLoad=B.SceneLoader.LoadAssetContainerAsync;let loads=0;
 B.SceneLoader.LoadAssetContainerAsync=async(_root,_file,scene)=>{
- loads++;
- B.DracoDecoder.ResetDefault();B.DracoCompression.ResetDefault();
+ loads++;B.DracoDecoder.ResetDefault();B.DracoCompression.ResetDefault();
  B.DracoDecoder.DefaultConfiguration={wasmUrl:'local-injected',wasmBinaryUrl:'local-injected',wasmBinary:wasm.buffer.slice(wasm.byteOffset,wasm.byteOffset+wasm.byteLength),jsModule:factory,numWorkers:0};
  return originalLoad.call(B.SceneLoader,'',`data:${source}`,scene,undefined,'.gltf');
 };
@@ -48,7 +45,7 @@ for(const quality of ['medium','high']){
  view.shadow=new B.ShadowGenerator(128,view.sun);
  const start=performance.now();
  try{
-  view.createWorld();
+  view.createWorld();console.log('Scene constructed',quality);
   const scenery=scene.metadata.scenery,counts=scenery.counts||scenery;
   assert.equal(scenery.circuitId,'sakura-valley-v1');assert.ok(counts.sakuraTrees>40);assert.ok(counts.terrainVertices>0);
   for(const mesh of scene.meshes){
@@ -60,7 +57,7 @@ for(const quality of ['medium','high']){
    }
   }
   view.environment=createCarEnvironment(scene);view.effects=new DrivingEffects(scene,{reducedMotion:true});view.motion=new RenderMotion();view.followCamera=new FollowCamera();view._boostFov=0;view._lastFrameTime=performance.now()/1000;
-  const beforeLoads=loads;await view.setRace(race);assert.equal(loads-beforeLoads,1,'one actual model load per scene');
+  const beforeLoads=loads;await view.setRace(race);console.log('Real fleet loaded',quality);assert.equal(loads-beforeLoads,1,'one actual model load per scene');
   const rigs=view.carNodes;assert.equal(rigs.length,3);assert.equal(scene.metadata.fleet.totalTriangles,4479357);
   for(const [i,rig]of rigs.entries()){
    assert.equal(rig.root.name,`car-${i}`);assert.equal(rig.meshes.length,54);assert.equal(rig.meshes.reduce((n,m)=>n+m.getTotalIndices()/3,0),1493119);
@@ -75,7 +72,8 @@ for(const quality of ['medium','high']){
   const meshCount=scene.meshes.length,geometryCount=scene.geometries.length;
   for(let n=0;n<3;n++){await view.setRace(new Race({carId:n%2?'apex':'titan'}));view.render(0);assert.equal(loads-beforeLoads,1);assert.equal(scene.meshes.length,meshCount);assert.equal(scene.geometries.length,geometryCount);}
   summary.push({quality,realAsset:true,carCount:3,triangles:4479357,partsPerCar:54,geometryShared:true,sakuraTrees:counts.sakuraTrees,sceneMeshes:meshCount,buildSeconds:+((performance.now()-start)/1000).toFixed(2)});
- }finally{view.effects?.dispose();scene.dispose();engine.dispose();}
+ }catch(error){console.error('SCENE_RUNTIME_FAILURE',quality,error.stack);throw error;}
+ finally{try{view.effects?.dispose();scene.dispose();engine.dispose();}catch(error){console.error('Scene test cleanup:',error.message);}}
 }
 B.SceneLoader.LoadAssetContainerAsync=originalLoad;B.DracoDecoder.ResetDefault();B.DracoCompression.ResetDefault();
 console.log('SCENE_RUNTIME_PASS',JSON.stringify(summary));

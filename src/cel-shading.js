@@ -228,7 +228,7 @@ function variantFor(mesh) {
   color:mesh.useVertexColors&&mesh.isVerticesDataPresent(B.VertexBuffer.ColorKind),
   // Restrict automatic borders to the known box topology of the city pools.
   // Other scenes can explicitly opt a box into this without new vertex data.
-  box:mesh.metadata?.celBoxInk===true||(mesh.metadata?.cityWorld&&mesh.metadata?.template&&mesh.getTotalVertices()===24&&mesh.getTotalIndices()===36)};
+  box:mesh.metadata?.celBoxInk===true||!!(mesh.metadata?.cityWorld&&mesh.metadata?.template&&mesh.getTotalVertices()===24&&mesh.getTotalIndices()===36)};
 }
 const effectMesh=mesh=>/^(tire-smoke-|tire-particulate-|grit-speck-|skid-mark-|boost-flame-)/.test(mesh.name);
 export function applyCelShading(view,options={}) {
@@ -407,7 +407,7 @@ export function applyCelShading(view,options={}) {
    let fog=1;
    if (scene.fogEnabled&&mesh.applyFog!==false&&mesh.material.fogEnabled!==false) {
     if (scene.fogMode===B.Scene.FOGMODE_EXP) fog=Math.exp(-distance*scene.fogDensity);
-    else if (scene.fogMode===B.Scene.FOGMODE_EXP2) fog=Math.exp(-(distance*scene.fogDensity)**2);
+    else if (scene.fogMode===B.Scene.FOGMODE_EXP2) fog=Math.exp(-((distance*scene.fogDensity)**2));
     else if (scene.fogMode===B.Scene.FOGMODE_LINEAR) fog=clamp((scene.fogEnd-distance)/Math.max(.001,scene.fogEnd-scene.fogStart),0,1);
    }
    // Core hull shader has no fog. Blend its ink toward the same haze on CPU,

@@ -49,13 +49,9 @@ function makeTexture(scene, name, base, accent, metres = 1, normal = false, peta
 function makeSkyTexture(scene) {
  const tex = new B.DynamicTexture('spring-sky-gradient-clouds', { width: 1024, height: 512 }, scene, false);
  const ctx = tex.getContext();
- const skyTop = [122, 173, 202], skyLow = [210, 228, 232];
  for (let y = 0; y < 512; y++) {
   const t = y / 511;
-  const r = skyTop[0] * (1 - t) + skyLow[0] * t;
-  const g = skyTop[1] * (1 - t) + skyLow[1] * t;
-  const b = skyTop[2] * (1 - t) + skyLow[2] * t;
-  ctx.fillStyle = `rgb(${r|0},${g|0},${b|0})`;
+  ctx.fillStyle = `rgb(${(122 * (1 - t) + 210 * t) | 0},${(173 * (1 - t) + 228 * t) | 0},${(202 * (1 - t) + 232 * t) | 0})`;
   ctx.fillRect(0, y, 1024, 1);
  }
  ctx.globalAlpha = .34;
@@ -81,28 +77,56 @@ function deformMesh(mesh, rnd, amount = .18) {
   positions[i + 2] *= f;
  }
  mesh.setVerticesData(B.VertexBuffer.PositionKind, positions);
- const indices = mesh.getIndices(), normals = [];
- B.VertexData.ComputeNormals(positions, indices, normals);
+ const normals = [];
+ B.VertexData.ComputeNormals(positions, mesh.getIndices(), normals);
  mesh.setVerticesData(B.VertexBuffer.NormalKind, normals);
 }
 
+function stripMesh(scene, name, left, right, material, metresPerRepeat = 8) {
+ const positions = [], indices = [], uvs = [];
+ const n = Math.min(left.length, right.length);
+ for (let i = 0; i < n; i++) {
+  positions.push(left[i].x, left[i].y, left[i].z, right[i].x, right[i].y, right[i].z);
+  const dx = right[i].x - left[i].x, dz = right[i].z - left[i].z;
+  const width = Math.hypot(dx, dz);
+  const u = i / Math.max(1, n - 1);
+  uvs.push(u, 0, u, width / metresPerRepeat);
+  if (i < n - 1) {
+   const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+   indices.push(a, c, b, b, c, d);
+  }
+ }
+ const mesh = new B.Mesh(name, scene);
+ const data = new B.VertexData();
+ data.positions = positions;
+ data.indices = indices;
+ data.uvs = uvs;
+ const normals = [];
+ B.VertexData.ComputeNormals(positions, indices, normals);
+ data.normals = normals;
+ data.applyToMesh(mesh);
+ if (mesh.getTotalVertices() * 2 !== uvs.length) throw new Error(`${name} UV length mismatch`);
+ mesh.material = material;
+ mesh.receiveShadows = true;
+ return mesh;
+}
+
 function metricBand(view, name, inner, outer, material, y = .025, metresPerRepeat = 8) {
- const track = view.race.track, left = [], right = [], uvs = [];
+ const track = view.race.track, left = [], right = [];
  for (let i = 0; i <= track.points.length; i++) {
   const s = i === track.points.length ? track.length : track.points[i].s;
   const a = track.at(s, inner), b = track.at(s, outer);
   left.push(v(a.x, y, a.z));
   right.push(v(b.x, y, b.z));
  }
- const mesh = B.MeshBuilder.CreateRibbon(name, { pathArray: [left, right], sideOrientation: B.Mesh.DOUBLESIDE }, view.scene);
- const width = Math.abs(outer - inner);
- for (let path = 0; path < 2; path++) for (let i = 0; i <= track.points.length; i++) {
+ const mesh = stripMesh(view.scene, name, left, right, material, metresPerRepeat);
+ const uvs = mesh.getVerticesData(B.VertexBuffer.UVKind);
+ for (let i = 0; i <= track.points.length; i++) {
   const s = i === track.points.length ? track.length : track.points[i].s;
-  uvs.push(s / metresPerRepeat, path * width / metresPerRepeat);
+  uvs[i * 4] = s / metresPerRepeat;
+  uvs[i * 4 + 2] = s / metresPerRepeat;
  }
  mesh.setVerticesData(B.VertexBuffer.UVKind, uvs);
- mesh.material = material;
- mesh.receiveShadows = true;
  return mesh;
 }
 
@@ -139,43 +163,42 @@ function addRoadBands(view, materials) {
  metricBand(view, 'sakura-asphalt', -HALF_WIDTH, HALF_WIDTH, materials.asphalt, .026, 7);
  metricBand(view, 'left-edge-line', -HALF_WIDTH + .14, -HALF_WIDTH + .32, materials.white, .041, 2);
  metricBand(view, 'right-edge-line', HALF_WIDTH - .32, HALF_WIDTH - .14, materials.white, .041, 2);
- const patches = [];
  const track = view.race.track;
+ let patches = 0;
  for (let s = 40; s < track.length; s += 92) {
-  const len = 22;
-  const paths = [[], []];
+  const left = [], right = [];
   for (let i = 0; i <= 8; i++) {
-   const d = s + i / 8 * len;
-   const center = Math.sin(d * .012) * 1.2;
-   for (const [j, off] of [center - 1.05, center + 1.05].entries()) {
-    const p = track.at(d, off);
-    paths[j].push(v(p.x, .047, p.z));
-   }
+   const d = s + i / 8 * 22, center = Math.sin(d * .012) * 1.2;
+   const a = track.at(d, center - 1.05), b = track.at(d, center + 1.05);
+   left.push(v(a.x, .047, a.z)); right.push(v(b.x, .047, b.z));
   }
-  const patch = B.MeshBuilder.CreateRibbon('subtle-racing-patch', { pathArray: paths, sideOrientation: B.Mesh.DOUBLESIDE }, view.scene);
-  patch.material = materials.seal;
+  const patch = stripMesh(view.scene, 'subtle-racing-patch', left, right, materials.seal, 5);
   patch.receiveShadows = false;
-  patches.push(patch);
+  patches++;
  }
- return patches.length;
+ return patches;
 }
 
 function addTerrain(view, track, materials, bounds, counts) {
  const size = 1120, half = size / 2, cells = view.quality === 'high' ? 60 : 44;
+ const cellDiag = Math.SQRT2 * size / cells;
  const positions = [], indices = [], uvs = [];
  const heightAt = (x, z) => {
   const p = track.project(x, z);
-  const roadFlat = 1 - smoothstep(BARRIER + 6, BARRIER + 58, p.distance);
+  if (p.distance <= BARRIER + cellDiag + 8) return -0.16;
+  const roadBlend = smoothstep(BARRIER + cellDiag + 8, BARRIER + cellDiag + 64, p.distance);
   const dxRiver = Math.abs(x - CIRCUIT.riverX);
   const riverCut = smoothstep(48, 20, dxRiver) * smoothstep(bounds.minZ - 210, bounds.minZ - 120, z) * (1 - smoothstep(bounds.maxZ + 120, bounds.maxZ + 210, z));
   const broad = Math.sin(x * .011) * 8 + Math.cos(z * .014) * 7 + Math.sin((x + z) * .007) * 6;
   const ridge = Math.max(0, p.distance - 120) * .075;
-  return -0.12 + (1 - roadFlat) * (broad + ridge) - riverCut * 9;
+  return -0.16 + roadBlend * (broad + ridge) - riverCut * 9;
  };
  for (let iz = 0; iz <= cells; iz++) for (let ix = 0; ix <= cells; ix++) {
   const x = bounds.centerX - half + ix / cells * size;
   const z = bounds.centerZ - half + iz / cells * size;
-  positions.push(x, heightAt(x, z), z);
+  const h = heightAt(x, z);
+  if (track.project(x, z).distance <= BARRIER + cellDiag + 8 && h > 0) throw new Error('terrain corridor above road');
+  positions.push(x, h, z);
   uvs.push(x / 6, z / 6);
  }
  for (let iz = 0; iz < cells; iz++) for (let ix = 0; ix < cells; ix++) {
@@ -190,6 +213,7 @@ function addTerrain(view, track, materials, bounds, counts) {
  mesh.material = materials.grass;
  mesh.receiveShadows = true;
  counts.terrainVertices = positions.length / 3;
+ counts.terrainFlatMargin = BARRIER + cellDiag + 8;
  return mesh;
 }
 
@@ -229,32 +253,37 @@ function addPaddock(view, track, materials, counts) {
  }
  addBox(view, 'gantry-top', [23, .76, 1.1], [0, 7.4, 0], materials.redLacquer, 0, gantry);
  view.sign('Sakura Valley Circuit', [0, 6.45, -.1], 17.8, 1.75, gantry);
+ const paddockRoot = new B.TransformNode('paddock-clear-root', view.scene);
+ const base = track.at(0, -46);
+ paddockRoot.position = v(base.x, 0, base.z);
+ paddockRoot.rotation.y = start.heading;
  const paddock = [];
  for (let i = 0; i < 8; i++) {
-  const x = -68 + i * 15.7;
-  paddock.push(addBox(view, 'pit-garage', [13.5, 5.5, 13.8], [x, 2.75, -170], materials.paddock));
-  paddock.push(addBox(view, 'garage-door', [11.7, 3.6, .13], [x, 1.86, -162.98], materials.door));
-  paddock.push(addBox(view, 'glass-timing-suite', [12.7, 2.85, 10.5], [x, 6.92, -170.2], materials.glass));
-  paddock.push(addBox(view, 'pit-roof', [14.2, .22, 14.4], [x, 8.48, -170.2], materials.white));
-  paddock.push(addBox(view, 'bamboo-slat', [.16, 2.6, 13.9], [x - 6.9, 6.2, -170], materials.wood));
+  const x = -55 + i * 15.7;
+  paddock.push(addBox(view, 'pit-garage', [13.5, 5.5, 13.8], [x, 2.75, 0], materials.paddock, 0, paddockRoot));
+  paddock.push(addBox(view, 'garage-door', [11.7, 3.6, .13], [x, 1.86, 6.92], materials.door, 0, paddockRoot));
+  paddock.push(addBox(view, 'glass-timing-suite', [12.7, 2.85, 10.5], [x, 6.92, -.2], materials.glass, 0, paddockRoot));
+  paddock.push(addBox(view, 'pit-roof', [14.2, .22, 14.4], [x, 8.48, -.2], materials.white, 0, paddockRoot));
  }
- const deck = new B.TransformNode('paddock-spectator-deck', view.scene);
- deck.position = v(35, 0, -145);
- deck.rotation.y = start.heading;
+ const deckRoot = new B.TransformNode('paddock-spectator-deck', view.scene);
+ const deckBase = track.at(18, -62);
+ deckRoot.position = v(deckBase.x, 0, deckBase.z);
+ deckRoot.rotation.y = start.heading;
  const deckParts = [];
- deckParts.push(addBox(view, 'deck-floor', [86, .42, 15], [0, 4.3, 0], materials.wood, 0, deck));
- deckParts.push(addBox(view, 'deck-roof', [90, .32, 17], [0, 8.1, 0], materials.white, 0, deck));
- for (let x = -40; x <= 40; x += 16) deckParts.push(addBox(view, 'deck-post', [.35, 7.8, .35], [x, 4, -6.4], materials.darkSteel, 0, deck));
- for (let row = 0; row < 4; row++) deckParts.push(addBox(view, 'deck-bench', [80, .32, 1.2], [0, 4.85 + row * .42, -3.8 + row * 2.2], materials.redLacquer, 0, deck));
- for (let i = 0; i < 90; i++) {
+ deckParts.push(addBox(view, 'deck-floor', [78, .42, 15], [0, 4.3, 0], materials.wood, 0, deckRoot));
+ deckParts.push(addBox(view, 'deck-roof', [82, .32, 17], [0, 8.1, 0], materials.white, 0, deckRoot));
+ for (let x = -36; x <= 36; x += 16) deckParts.push(addBox(view, 'deck-post', [.35, 7.8, .35], [x, 4, -6.4], materials.darkSteel, 0, deckRoot));
+ for (let row = 0; row < 4; row++) deckParts.push(addBox(view, 'deck-bench', [72, .32, 1.2], [0, 4.85 + row * .42, -3.8 + row * 2.2], materials.redLacquer, 0, deckRoot));
+ for (let i = 0; i < 72; i++) {
   const p = B.MeshBuilder.CreateSphere('deck-spectator', { diameter: .46, segments: 5 }, view.scene);
-  p.position = v(-39 + (i % 30) * 2.7, 5.35 + Math.floor(i / 30) * .45, -4 + Math.floor(i / 30) * 2.2);
-  p.parent = deck;
+  p.position = v(-34 + (i % 24) * 2.9, 5.35 + Math.floor(i / 24) * .45, -4 + Math.floor(i / 24) * 2.2);
+  p.parent = deckRoot;
   p.material = [materials.kerb, materials.door, materials.white, materials.wood][i % 4];
   deckParts.push(p);
  }
  view.merge(paddock, 'batched-paddock-buildings');
  counts.paddockMeshes = paddock.length + deckParts.length + 4;
+ counts.paddockOffset = -46;
 }
 
 function turnSites(track) {
@@ -267,8 +296,9 @@ function turnSites(track) {
 }
 
 function addMarkers(view, track, materials, counts) {
+ const sites = turnSites(track);
  let signs = 0;
- for (const site of turnSites(track)) {
+ for (const site of sites) {
   const side = site.curve > 0 ? 1 : -1;
   for (const distance of [150, 100]) {
    const p = track.at(site.s - distance, side * (BARRIER + 7.5));
@@ -310,15 +340,11 @@ function addRiver(view, materials, bounds, counts) {
   bankA.push(v(cx - width - 8, .07, z));
   bankB.push(v(cx + width + 8, .07, z));
  }
- const river = B.MeshBuilder.CreateRibbon('azuma-river-visible-water', { pathArray: [west, east], sideOrientation: B.Mesh.DOUBLESIDE }, view.scene);
- river.material = materials.water;
+ const river = stripMesh(view.scene, 'azuma-river-visible-water', west, east, materials.water, 8);
  river.receiveShadows = false;
- const leftBank = B.MeshBuilder.CreateRibbon('rocky-west-bank', { pathArray: [bankA, west], sideOrientation: B.Mesh.DOUBLESIDE }, view.scene);
- leftBank.material = materials.rock;
- leftBank.receiveShadows = true;
- const rightBank = B.MeshBuilder.CreateRibbon('rocky-east-bank', { pathArray: [east, bankB], sideOrientation: B.Mesh.DOUBLESIDE }, view.scene);
- rightBank.material = materials.rock;
- rightBank.receiveShadows = true;
+ const leftBank = stripMesh(view.scene, 'rocky-west-bank', bankA, west, materials.rock, 5);
+ const rightBank = stripMesh(view.scene, 'rocky-east-bank', east, bankB, materials.rock, 5);
+ leftBank.receiveShadows = rightBank.receiveShadows = true;
  const rocks = [];
  for (let i = 0; i < 64; i++) {
   const u = i / 64, z = minZ + (maxZ - minZ) * u, side = i % 2 ? -1 : 1;
@@ -366,19 +392,19 @@ function addTrees(view, track, materials, bounds, counts) {
  mixedBase.material = materials.leaf; deformMesh(mixedBase, rnd, .24); mixedBase.isVisible = false;
  let sakura = 0, woodland = 0, shadowed = 0, rejected = 0;
  const addCaster = mesh => { if (shadowed < 180 && view.shadow) { view.shadow.addShadowCaster(mesh); shadowed++; } };
- const addSakura = (x, z, scale, heading = 0, near = true) => {
+ const addSakura = (x, z, scale, heading = 0) => {
   const trunk = makeInstance(trunkBase, 'sakura-trunk', v(x, 2.15 * scale, z), v(.55 * scale, 4.3 * scale, .55 * scale), heading, .03 * (rnd() - .5), .08 * (rnd() - .5));
-  if (near) addCaster(trunk);
+  addCaster(trunk);
   for (let b = 0; b < 4; b++) {
    const a = heading + b * Math.PI * .5 + (rnd() - .5) * .55;
    const br = makeInstance(branchBase, 'sakura-connected-branch', v(x + Math.sin(a) * 1.0 * scale, (3.8 + rnd() * .7) * scale, z + Math.cos(a) * 1.0 * scale), v(.18 * scale, (2.4 + rnd() * .6) * scale, .18 * scale), a, .65 + rnd() * .22, Math.sin(a) * .65);
-   if (near && b < 2) addCaster(br);
+   if (b < 2) addCaster(br);
   }
   for (let c = 0; c < 8; c++) {
    const a = heading + c * .78 + (rnd() - .5) * .3;
    const r = (1.3 + rnd() * 2.2) * scale, y = (4.4 + rnd() * 2.2) * scale;
    const mesh = makeInstance(c % 3 === 0 ? blossomWhite : blossomBase, 'irregular-sakura-blossom', v(x + Math.sin(a) * r, y, z + Math.cos(a) * r), v((1.6 + rnd() * 1.2) * scale, (.9 + rnd() * .65) * scale, (1.3 + rnd() * 1.1) * scale), rnd() * Math.PI, (rnd() - .5) * .45);
-   if (near && c < 3) addCaster(mesh);
+   if (c < 3) addCaster(mesh);
   }
  };
  for (let s = 18; s < track.length; s += 32) for (const side of [-1, 1]) {
@@ -387,10 +413,7 @@ function addTrees(view, track, materials, bounds, counts) {
   for (const extra of [0, 7, 14]) {
    const p = track.at(s, side * (BARRIER + 18 + extra + rnd() * 7));
    const scale = .82 + rnd() * .28;
-   if (clearFootprint(track, p.x, p.z, 9 * scale, 7)) {
-    addSakura(p.x, p.z, scale, p.heading, true);
-    sakura++; placed = true; break;
-   }
+   if (clearFootprint(track, p.x, p.z, 9 * scale, 7)) { addSakura(p.x, p.z, scale, p.heading); sakura++; placed = true; break; }
   }
   if (!placed) rejected++;
  }

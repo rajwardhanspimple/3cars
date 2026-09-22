@@ -1,9 +1,11 @@
-const KEY='3cars.records.arcade-v1';
+const KEY='3cars.records.sakura-v1';
+const ARCADE_KEY='3cars.records.arcade-v1';
 const LEGACY_KEY='3cars.records';
 const DEFAULTS={carId:'vortex',weather:'dry',muted:false,quality:'high'};
 const cars=['vortex','apex','titan'],weather=['dry','wet'];
 const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const finite=v=>typeof v==='number'&&Number.isFinite(v);
+const emptyData=()=>({version:1,settings:{...DEFAULTS},results:[],bests:{}});
 function validSetting(k,v){return k==='carId'?cars.includes(v):k==='weather'?weather.includes(v):k==='muted'?typeof v==='boolean':k==='quality'?['high','medium'].includes(v):false;}
 function cleanSettings(value){const out={...DEFAULTS};if(object(value))for(const k of Object.keys(out))if(validSetting(k,value[k]))out[k]=value[k];return out;}
 function cleanRace(r){
@@ -13,6 +15,19 @@ function cleanRace(r){
  if(typeof r.finishedAt!=='string'||r.finishedAt.length>40||!/^\d{4}-\d{2}-\d{2}T/.test(r.finishedAt)||!Number.isFinite(Date.parse(r.finishedAt)))return null;
  return {carId:r.carId,weather:r.weather,position:r.position,time:r.time,penalty:r.penalty,bestLap:r.bestLap,finishedAt:r.finishedAt};
 }
+function migratedSettings(storage){
+ const arcadeText=storage.getItem(ARCADE_KEY);
+ if(arcadeText!==null){
+  let arcadeData;
+  try{arcadeData=JSON.parse(arcadeText);}catch{return null;}
+  return object(arcadeData)&&arcadeData.version===1?cleanSettings(arcadeData.settings):null;
+ }
+ const legacyText=storage.getItem(LEGACY_KEY);
+ if(legacyText===null)return null;
+ let legacyData;
+ try{legacyData=JSON.parse(legacyText);}catch{return null;}
+ return object(legacyData)&&legacyData.version===1?cleanSettings(legacyData.settings):null;
+}
 export class LocalRecords {
  constructor(storage){
   this._storage=null;this._available=false;
@@ -20,10 +35,10 @@ export class LocalRecords {
  }
  get available(){return this._available;}
  read(){
-  const empty={version:1,settings:{...DEFAULTS},results:[],bests:{}};if(!this._available)return empty;
+  const empty=emptyData();if(!this._available)return empty;
   let text;try{text=this._storage.getItem(KEY);}catch{this._available=false;return empty;}
   if(text===null){
-   try{const legacyText=this._storage.getItem(LEGACY_KEY);if(legacyText!==null){const legacyData=JSON.parse(legacyText);if(object(legacyData)&&legacyData.version===1)empty.settings=cleanSettings(legacyData.settings);}}catch{}
+   try{const settings=migratedSettings(this._storage);if(settings)empty.settings=settings;}catch{}
    return empty;
   }
   let data;try{data=JSON.parse(text);}catch{return empty;}if(!object(data)||data.version!==1)return empty;

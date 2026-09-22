@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {Race,makeTrack,CARS,LAPS,PENALTIES} from '../src/sim.js';
 const stepFor=(r,seconds,input={})=>{for(let i=0;i<Math.ceil(seconds*120);i++)r.step(1/120,input);};
 test('closed circuit sampling, projection, and length are consistent',()=>{
- const t=makeTrack();assert.ok(t.length>800);assert.ok(t.length<1800);
+ const t=makeTrack();assert.equal(t.id,'sakura-valley-v1');assert.equal(t.name,'Sakura Valley');assert.ok(t.length>1600);assert.ok(t.length<2600);
  for(let s=0;s<t.length;s+=17){const p=t.at(s),q=t.project(p.x,p.z);assert.ok(q.distance<.1);assert.ok(Math.abs(q.s-s)<.2);}
  assert.ok(Math.hypot(t.at(0).x-t.at(t.length).x,t.at(0).z-t.at(t.length).z)<1e-8);
 });
@@ -38,6 +38,6 @@ test('tire damage reduces cornering grip at equal speed and steering',()=>{
  assert.ok(damaged.player.slip<1&&clean.player.slip<1);
  assert.ok(Math.abs(damaged.player.yawRate)<Math.abs(clean.player.yawRate));
 });
-test('competitive AI finishes dry and wet five-lap races',{timeout:120000},()=>{
- for(const weather of ['dry','wet']){const r=new Race({weather});r.start();for(let i=0;i<120*900&&r.phase!=='finished';i++)r.step(1/120,r.ai(r.player));assert.equal(r.phase,'finished',`${weather}: laps ${r.cars.map(c=>c.lapTimes.length)}`);assert.ok(r.cars.every(c=>c.finished&&Number.isFinite(c.finishTime)));}
+test('competitive AI finishes dry and wet five-lap races with all car profiles',{timeout:180000},()=>{
+ for(const weather of ['dry','wet'])for(const carId of CARS.map(c=>c.id)){const r=new Race({weather,carId});r.start();for(let i=0;i<120*900&&r.phase!=='finished';i++)r.step(1/120,r.ai(r.player,1/120));assert.equal(r.phase,'finished',`${weather} ${carId}: laps ${r.cars.map(c=>c.lapTimes.length)}`);assert.ok(r.cars.every(c=>c.finished&&Number.isFinite(c.finishTime)));}
 });

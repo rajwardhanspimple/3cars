@@ -1,6 +1,8 @@
 import {RaceView as CircuitView} from './view.js';
 import {createMustangFleet,createCarEnvironment,MUSTANG_TRIANGLES,MUSTANG_FLEET_TRIANGLES} from './mustang.js';
+import {applyCelShading} from './cel-shading.js';
 import {DrivingEffects} from './driving-effects.js';
+import {BoostEffects} from './boost-effects.js';
 import {RenderMotion,FollowCamera} from './render-motion.js';
 import {roadHeight,roadPose} from './mountain-layout.js';
 import {clamp} from './sim.js';
@@ -15,11 +17,11 @@ export class RaceView extends CircuitView {
   super(canvas,race,options);
   this.environment=createCarEnvironment(this.scene);
   this.effects=new DrivingEffects(this.scene,{reducedMotion:this.reducedMotion});
-  if(this.carNodes?.length)this.effects.setCarNodes(this.carNodes);
+  this.boostEffects=new BoostEffects(this.scene,this.camera,{quality:this.quality,reducedMotion:this.reducedMotion});
+  if(this.carNodes?.length){this.effects.setCarNodes(this.carNodes);this.effects.disposeFlames();this.boostEffects.setCarNodes(this.carNodes);}
   this.motion=new RenderMotion();this.followCamera=new FollowCamera();
   this._lastFrameTime=nowSeconds();this._boostFov=0;
-  this.scene.imageProcessingConfiguration.exposure=1.04;
-  this.scene.imageProcessingConfiguration.contrast=1.08;
+  this.celOptions=options?.celShading||{};
  }
  setRace(race){this.ready=this.refreshRace(race);return this.ready;}
  disposeCurrentCarNodes(){
@@ -31,7 +33,7 @@ export class RaceView extends CircuitView {
  }
  async refreshRace(race){
   const revision=this.revision=(this.revision||0)+1;this.race=race;
-  this.motion?.clear();this.followCamera=new FollowCamera();this._boostFov=0;
+  this.motion?.clear();this.followCamera=new FollowCamera();this._boostFov=0;this.boostEffects?.reset();
   const status=document.getElementById('model-status');if(status)status.textContent='Loading original Mustang geometry...';
   if(!this.carNodes?.every?.(node=>node?.imported))this.disposeCurrentCarNodes();
   if(!this.fleetPromise)this.fleetPromise=createMustangFleet(this,race.cars);
@@ -47,7 +49,10 @@ export class RaceView extends CircuitView {
     for(const wheel of node.wheels){wheel.spin.rotation.setAll(0);wheel.pivot.rotation.setAll(0);}
     node.body.position.setAll(0);node.body.rotation.setAll(0);
    }
-   this.cacheTailMaterials();this.effects?.setCarNodes(this.carNodes);this.cameraReady=false;this.setWeather(race.weather);
+   this.cacheTailMaterials();this.effects?.setCarNodes(this.carNodes);this.effects?.disposeFlames();this.boostEffects?.setCarNodes(this.carNodes);this.cameraReady=false;this.setWeather(race.weather);
+   // Convert only after async world textures, foliage instances and fleet clones exist.
+   // Source paint/tail handles stay live; the renderer reads them on every bind.
+   this.celShading=applyCelShading(this,this.celShading?{}:this.celOptions);
    if(status){
     status.textContent='Original Mustang fleet: 3 × 1,493,119 = 4,479,357 triangles. Shared geometry, no reduced-detail versions.';
     status.dataset.triangles=String(MUSTANG_TRIANGLES);
@@ -90,8 +95,11 @@ export class RaceView extends CircuitView {
    offset={x:-lookX*(8.5+speed*.03),y:3.9+speed*.013,z:-lookZ*(8.5+speed*.03)};
    look={x:lookX*8+latX*steer*3.1,y:1.05,z:lookZ*8+latZ*steer*3.1};
   }
-  const camera=this.followCamera.update(renderPlayer,offset,look,stepDt,!this.cameraReady||this.motion.resetCamera,{reducedMotion:this.reducedMotion});
-  this.camera.position.set(camera.position.x,camera.position.y,camera.position.z);
+  const snap=!this.cameraReady||this.motion.resetCamera;
+  const camera=this.followCamera.update(renderPlayer,offset,look,stepDt,snap,{reducedMotion:this.reducedMotion});
+  const surge=this.boostEffects.update(cars,stepDt,race.phase,snap);
+  // Add ignition displacement after the existing interpolated road/body camera.
+  this.camera.position.set(camera.position.x+latX*surge.shakeX,camera.position.y+surge.shakeY,camera.position.z+latZ*surge.shakeX);
   this.camera.setTarget(v(camera.target.x,camera.target.y,camera.target.z));this.cameraReady=true;
   const boostTarget=(!this.reducedMotion&&race.phase==='racing'&&renderPlayer.boostActive)?1:0;this._boostFov+=(boostTarget-this._boostFov)*(1-Math.exp(-stepDt*7));
   this.camera.fov=race.phase==='menu'?.65:(this.reducedMotion?.8:.8+clamp(speed/500,0,.12)+this._boostFov*.035);
@@ -100,5 +108,5 @@ export class RaceView extends CircuitView {
   this.updateScenery?.(stepDt,renderPlayer,race.phase);
   this.scene.render();
  }
- dispose(){if(this.disposed)return;this.effects?.dispose();this.effects=null;this.motion?.clear();this.disposed=true;this.revision=(this.revision||0)+1;super.dispose();}
+ dispose(){if(this.disposed)return;this.celShading?.dispose();this.boostEffects?.dispose();this.effects?.dispose();this.effects=null;this.motion?.clear();this.disposed=true;this.revision=(this.revision||0)+1;super.dispose();}
 }

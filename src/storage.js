@@ -1,7 +1,9 @@
+import { DEFAULT_TRACK, MOUNTAIN_TRACK, TRACKS, isTrack } from './tracks.js';
 const KEY='3cars.records.mountain-preview-v1';
 const SAKURA_KEY='3cars.records.sakura-v1';
 const ARCADE_KEY='3cars.records.arcade-v1';
 const LEGACY_KEY='3cars.records';
+export const SETTINGS_KEY='3cars.settings.anime-v1';
 const DEFAULTS={carId:'vortex',weather:'dry',muted:false,quality:'high'};
 const cars=['vortex','apex','titan'],weather=['dry','wet'];
 const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
@@ -28,17 +30,18 @@ function migratedSettings(storage){
  return null;
 }
 
+// Keep the original mountain-only API and migration behaviour for old callers.
 export class LocalRecords {
  constructor(storage){
-  this._storage=null;this._available=false;
+  this.key=KEY;this._storage=null;this._available=false;
   try{this._storage=storage===undefined?globalThis.localStorage:storage;const key=`3cars.probe.${Math.random()}`;this._storage.setItem(key,'1');this._available=this._storage.getItem(key)==='1';this._storage.removeItem(key);}catch{}
  }
  get available(){return this._available;}
- read(){
+ read(key=this.key){
   const empty=emptyData();if(!this._available)return empty;
-  let text;try{text=this._storage.getItem(KEY);}catch{this._available=false;return empty;}
+  let text;try{text=this._storage.getItem(key);}catch{this._available=false;return empty;}
   if(text===null){
-   try{const settings=migratedSettings(this._storage);if(settings)empty.settings=settings;}catch{}
+   if(key===KEY)try{const settings=migratedSettings(this._storage);if(settings)empty.settings=settings;}catch{}
    return empty;
   }
   let data;try{data=JSON.parse(text);}catch{return empty;}if(!object(data)||data.version!==1)return empty;
@@ -47,10 +50,39 @@ export class LocalRecords {
   for(const r of empty.results)if(r.bestLap!==null){const k=`${r.carId}:${r.weather}`;empty.bests[k]=Math.min(empty.bests[k]??Infinity,r.bestLap);}
   return empty;
  }
- write(data){if(!this._available)return false;try{this._storage.setItem(KEY,JSON.stringify(data));return true;}catch{this._available=false;return false;}}
+ write(data){if(!this._available)return false;try{this._storage.setItem(this.key,JSON.stringify(data));return true;}catch{this._available=false;return false;}}
  loadSettings(){return this.read().settings;}
  saveSettings(partial){if(!object(partial)||!Object.entries(partial).every(([k,v])=>validSetting(k,v)))return false;const data=this.read();data.settings={...data.settings,...partial};return this.write(data);}
  bestLap(carId,condition){if(!cars.includes(carId)||!weather.includes(condition))return null;return this.read().bests[`${carId}:${condition}`]??null;}
  recordRace(entry){const row=cleanRace(entry);if(!row)return false;const data=this.read();data.results=[row,...data.results].slice(0,20);if(row.bestLap!==null){const key=`${row.carId}:${row.weather}`;data.bests[key]=Math.min(data.bests[key]??Infinity,row.bestLap);}return this.write(data);}
  results(){return this.read().results;}
+}
+
+// Global setup settings are separate from route records. Merely selecting a
+// track or changing settings never rewrites an existing mountain record blob.
+export class TrackRecords extends LocalRecords {
+ constructor(storage){super(storage);this.selectTrack(DEFAULT_TRACK);}
+ selectTrack(trackId){
+  if(!isTrack(trackId))throw new TypeError('Unknown track');
+  this.trackId=trackId;this.key=TRACKS[trackId].recordsKey;
+ }
+ loadSettings(){
+  const defaults={...DEFAULTS,trackId:DEFAULT_TRACK};
+  if(!this.available)return defaults;
+  let text;try{text=this._storage.getItem(SETTINGS_KEY);}catch{this._available=false;return defaults;}
+  if(text===null){
+   // Reuse the existing ordered, settings-only migration. Never import results.
+   return {...super.read(TRACKS[MOUNTAIN_TRACK].recordsKey).settings,trackId:DEFAULT_TRACK};
+  }
+  let data;try{data=JSON.parse(text);}catch{return defaults;}
+  if(!object(data)||data.version!==1)return defaults;
+  return {...cleanSettings(data.settings),trackId:isTrack(data.settings?.trackId)?data.settings.trackId:DEFAULT_TRACK};
+ }
+ saveSettings(partial){
+  if(!object(partial)||!Object.entries(partial).every(([k,v])=>k==='trackId'?isTrack(v):validSetting(k,v)))return false;
+  const settings={...this.loadSettings(),...partial};
+  if(!this.available)return false;
+  try{this._storage.setItem(SETTINGS_KEY,JSON.stringify({version:1,settings}));return true;}
+  catch{this._available=false;return false;}
+ }
 }

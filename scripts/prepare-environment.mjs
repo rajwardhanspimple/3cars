@@ -1,11 +1,11 @@
 import {createHash} from 'node:crypto';
-import {readFile,writeFile,mkdir,rename,stat} from 'node:fs/promises';
+import {readFile,writeFile,mkdir,rename} from 'node:fs/promises';
 import {createWriteStream} from 'node:fs';
 import {resolve,dirname,relative,basename} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {optimizeGreenTree} from './optimize-foliage.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url)),dest=resolve(root,'assets/environment');
-const manifest=JSON.parse(await readFile(new URL('../assets/environment-sources.json',import.meta.url),'utf8'));
+const manifest=JSON.parse(await readFile(resolve(root,'assets/environment-sources.json'),'utf8'));
 const digest=(bytes,kind='sha256')=>createHash(kind).update(bytes).digest('hex');
 const mb=n=>`${(n/1048576).toFixed(1)} MB`;
 function allowed(url){const u=new URL(url);if(u.protocol!=='https:'||!['raw.githubusercontent.com','api.polyhaven.com','dl.polyhaven.org'].includes(u.hostname))throw Error('Unapproved asset host: '+url);return u;}
@@ -56,7 +56,8 @@ function glbJSON(bytes){if(bytes.readUInt32LE(0)!==0x46546c67||bytes.readUInt32L
 function safePath(base,path){const p=resolve(base,path);if(relative(base,p).startsWith('..')||path.includes('\\'))throw Error('Unsafe asset path '+path);return p;}
 export async function prepareEnvironment(){
  await mkdir(dest,{recursive:true});
- console.log('Preparing environment assets. Large files download once, then cache.');
+ console.log(`Preparing environment assets in ${dest}`);
+ console.log('Large files download once, then cache.');
  const cherryBytes=await download(manifest.cherry.url,resolve(dest,'cherry.glb'),null,manifest.cherry.bytes),cherry=glbJSON(cherryBytes),extra=JSON.stringify(cherry.asset?.extras||{});
  if(digest(cherryBytes)!=='43c28c4611abdfc058fa484383156e70f5f1cf6ee52b19eb7f97851867a277fc')throw Error('Cherry source checksum changed');
  if(!extra.includes('db1b69851fd449928d36767c4f15502d')||!extra.toLowerCase().includes(manifest.cherry.creator)||!extra.includes(manifest.cherry.license))throw Error('Cherry mirror attribution does not match verified creator listing');

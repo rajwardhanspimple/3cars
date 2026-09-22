@@ -301,7 +301,12 @@ export class Race {
     car.steerTarget=targetSteer;
     if(Math.abs(targetSteer)<.05 || Math.abs(car.steer-targetSteer)<.08) car.steerReversing=false;
     const turnIn=Math.abs(targetSteer)>Math.abs(car.steer)+.001;
-    car.steer=smooth(car.steer,targetSteer,car.steerReversing?ARCADE.steerReverseRate:(turnIn?ARCADE.steerTurnInRate:16),dt);
+    // Small control response changes only. Grip ceilings and recovery forces stay intact.
+    const measuredSlip=Math.atan2(car.vx*Math.cos(car.yaw)-car.vz*Math.sin(car.yaw),Math.max(Math.abs(car.vx*Math.sin(car.yaw)+car.vz*Math.cos(car.yaw)),1));
+    const counterSteer=targetSteer*measuredSlip>0&&Math.abs(measuredSlip)>.14;
+    const driftTurnIn=!!input.handbrake&&Math.hypot(car.vx,car.vz)>ARCADE.driftMinSpeed;
+    const response=car.steerReversing?ARCADE.steerReverseRate*(counterSteer?1.06:1):(turnIn?ARCADE.steerTurnInRate*(driftTurnIn?1.04:counterSteer?1.06:1):16);
+    car.steer=smooth(car.steer,targetSteer,response,dt);
     car.handbrake=!!input.handbrake;
     const contact=this.track.project(car.x,car.z,car.hint),off=contact.distance>HALF_WIDTH;
     car.surface=off?(contact.distance>HALF_WIDTH+4?'dirt':'grass'):'asphalt';
@@ -355,7 +360,8 @@ export class Race {
       const top=normalTop*(car.boostActive?ARCADE.nitroTopSpeed:1);
       let motor=car.reversing?-Math.min(car.brake*6,traction*.9):Math.min(drive,traction*.90)+(car.boostActive?ARCADE.nitroAccel:0);
       if((u>=top&&motor>0)||(u<=-11&&motor<0))motor=0;
-      const resist=.32+speed*speed*.00065+(off?speed*.38:0)+(car.handbrake?.15:0)+(car.reversing?0:Math.min(braking,traction*.95));
+      // Retain a little more speed under Space without injecting drift energy.
+      const resist=.32+speed*speed*.00065+(off?speed*.38:0)+(car.handbrake?.10:0)+(car.reversing?0:Math.min(braking,traction*.95));
       // Resistive forces cannot reverse motion. Brake-to-reverse uses motor torque.
       const drag=Math.sign(u)*Math.min(resist,speed/h);
       const ax=motor-drag-front*Math.sin(wheel),ay=frontLateral+rear;
@@ -472,8 +478,7 @@ export class Race {
   guardrail(car,p=this.track.project(car.x,car.z,car.hint)) {
     const depth=p.distance-(BARRIER-1.2);if(depth<=0)return false;
     const sign=p.lateral>=0?1:-1;
-    this.staticContact(car,-Math.cos(p.heading)*sign,Math.sin(p.heading)*sign,depth);
-    return true;
+    this.staticContact(car,-Math.cos(p.heading)*sign,Math.sin(p.heading)*sign,depth);return true;
   }
   nearSolid(x,z,r=0){return this.layout.trees.some(t=>Math.hypot(x-t.x,z-t.z)<r+t.radius)||this.layout.walls.some(w=>Math.hypot(x-w.x,z-w.z)<r+w.length*.5);}
   updateProps(dt){

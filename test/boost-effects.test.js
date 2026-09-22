@@ -3,22 +3,24 @@ import assert from 'node:assert/strict';
 import {BoostState} from '../src/boost-state.js';
 import {RaceAudio} from '../src/audio.js';
 const car=Object.freeze({index:0,speed:70,throttle:1,boostActive:true,nitro:50,nitroCooldown:0});
+// Exponential decay can leave -0, which is numerically zero but fails strictEqual(0).
+const zero=v=>v===0?0:v;
 test('surge attacks, ignites once, releases, and never changes simulation state',()=>{
  const s=new BoostState(),before=JSON.stringify(car);
  s.update(car,1/120,'racing');const first=s.intensity;assert.ok(s.ignition>0);assert.ok(Math.abs(s.shakeX)>0);
  for(let i=0;i<60;i++)s.update(car,1/120,'racing');
- assert.ok(s.intensity>first);assert.ok(s.intensity<=1);assert.equal(s.ignition,0);assert.equal(s.shakeX,0);assert.ok(s.lines>0);
+ assert.ok(s.intensity>first);assert.ok(s.intensity<=1);assert.equal(zero(s.ignition),0);assert.equal(zero(s.shakeX),0);assert.ok(s.lines>0);
  for(let i=0;i<60;i++)s.update({...car,boostActive:false,speed:20},1/120,'racing');
- assert.ok(s.intensity<.001);assert.equal(s.lines,0);
+ assert.ok(s.intensity<.001);assert.equal(zero(s.lines),0);
  s.update(car,1/120,'racing');assert.ok(s.ignition>0);
- for(const phase of ['paused','finished','menu','countdown']){s.update(car,0,phase);assert.equal(s.intensity,0);assert.equal(s.lines,0);assert.equal(s.shakeY,0);}
- s.update(car,1/120,'racing',true);assert.equal(s.ignition,0,'camera reset must not fake ignition');
+ for(const phase of ['paused','finished','menu','countdown']){s.update(car,0,phase);assert.equal(zero(s.intensity),0);assert.equal(zero(s.lines),0);assert.equal(zero(s.shakeY),0);}
+ s.update(car,1/120,'racing',true);assert.equal(zero(s.ignition),0,'camera reset must not fake ignition');
  assert.equal(JSON.stringify(car),before);
 });
 test('lines require high speed or hard boost; reduced motion keeps flames but no shake/lines',()=>{
- for(const boostActive of [false,true]){const s=new BoostState();for(let i=0;i<60;i++)s.update({...car,boostActive,speed:30},1/60,'racing');assert.equal(s.lines,0);}
+ for(const boostActive of [false,true]){const s=new BoostState();for(let i=0;i<60;i++)s.update({...car,boostActive,speed:30},1/60,'racing');assert.equal(zero(s.lines),0);}
  const s=new BoostState();s.update({...car,boostActive:false,speed:80},.1,'racing');assert.ok(s.lines>0);
- const reduced=new BoostState({reducedMotion:true});reduced.update(car,.1,'racing');assert.ok(reduced.intensity>0);assert.equal(reduced.lines,0);assert.equal(reduced.shakeX,0);assert.equal(reduced.shakeY,0);
+ const reduced=new BoostState({reducedMotion:true});reduced.update(car,.1,'racing');assert.ok(reduced.intensity>0);assert.equal(zero(reduced.lines),0);assert.equal(zero(reduced.shakeX),0);assert.equal(zero(reduced.shakeY),0);
  s.update({...car,speed:NaN,throttle:NaN},NaN,'racing');assert.ok(Number.isFinite(s.intensity));
 });
 test('boost envelope agrees at 30 and 120Hz',()=>{

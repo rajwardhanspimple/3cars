@@ -2,6 +2,7 @@ import { buildMountainWorld } from './mountain-world.js';
 import { buildCityWorld } from './city-world.js';
 import { applyCelShading, registerCelPalette } from './cel-shading.js';
 import { installCelSurfaceDetails } from './cel-surface-details.js';
+import { installNightSkyline, NIGHT_SKYLINE } from './night-skyline.js';
 import { orientGroundSurfaces } from './surface-geometry.js';
 import { MOUNTAIN_TRACK, trackInfo } from './tracks.js';
 
@@ -31,11 +32,13 @@ export function applyNighttimeCel(view) {
   palette:'city-night', bandCount:3, terminator:.28, ambientStrength:.22, sunStrength:.95,
   shadowStrength:.55, textureStrength:.12, textureLevels:4,
   grade:{toneMappingEnabled:false, exposure:1.08, contrast:1.18, saturation:42},
-  bloom:{enabled:view.quality==='high', threshold:1.05, weight:.1, kernel:24},
+  bloom:{enabled:view.quality==='high', threshold:NIGHT_SKYLINE.bloomThreshold,
+   weight:NIGHT_SKYLINE.bloomWeight, kernel:NIGHT_SKYLINE.bloomKernel},
   outlines:{color:'#050611',pixels:view.quality==='high'?3:2.5,
    cutoff:view.quality==='high'?110:80,maxWidth:.12,nearBoost:.5,nearDistance:24,carBoost:1.3}
  });
  installCelSurfaceDetails(view);
+ installNightSkyline(view);
  return view.celShading;
 }
 

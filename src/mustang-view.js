@@ -1,5 +1,6 @@
 import {RaceView as CircuitView} from './view.js';
 import {createMustangFleet,createCarEnvironment,MUSTANG_TRIANGLES,MUSTANG_FLEET_TRIANGLES} from './mustang.js';
+import {applyCelShading} from './cel-shading.js';
 import {DrivingEffects} from './driving-effects.js';
 import {RenderMotion,FollowCamera} from './render-motion.js';
 import {roadHeight,roadPose} from './mountain-layout.js';
@@ -18,8 +19,7 @@ export class RaceView extends CircuitView {
   if(this.carNodes?.length)this.effects.setCarNodes(this.carNodes);
   this.motion=new RenderMotion();this.followCamera=new FollowCamera();
   this._lastFrameTime=nowSeconds();this._boostFov=0;
-  this.scene.imageProcessingConfiguration.exposure=1.04;
-  this.scene.imageProcessingConfiguration.contrast=1.08;
+  this.celOptions=options?.celShading||{};
  }
  setRace(race){this.ready=this.refreshRace(race);return this.ready;}
  disposeCurrentCarNodes(){
@@ -48,6 +48,9 @@ export class RaceView extends CircuitView {
     node.body.position.setAll(0);node.body.rotation.setAll(0);
    }
    this.cacheTailMaterials();this.effects?.setCarNodes(this.carNodes);this.cameraReady=false;this.setWeather(race.weather);
+   // Convert only after async world textures, foliage instances and fleet clones exist.
+   // Source paint/tail handles stay live; the renderer reads them on every bind.
+   this.celShading=applyCelShading(this,this.celShading?{}:this.celOptions);
    if(status){
     status.textContent='Original Mustang fleet: 3 × 1,493,119 = 4,479,357 triangles. Shared geometry, no reduced-detail versions.';
     status.dataset.triangles=String(MUSTANG_TRIANGLES);
@@ -75,7 +78,7 @@ export class RaceView extends CircuitView {
   const cars=this.motion.sample(race,wall*1000),p=cars[0],playerSurface=roadPose(p.x,p.z,p.yaw),renderPlayer={...p,y:Number.isFinite(p.y)?p.y:roadHeight(p.x,p.z),pitch:Number.isFinite(p.pitch)?p.pitch:playerSurface.pitch,roll:Number.isFinite(p.roll)?p.roll:playerSurface.roll};this.elapsed+=stepDt;
   for(const car of cars){const node=this.carNodes[car.index],surface=roadPose(car.x,car.z,car.yaw),carY=Number.isFinite(car.y)?car.y:roadHeight(car.x,car.z),roadPitch=Number.isFinite(car.pitch)?car.pitch:surface.pitch,roadRoll=Number.isFinite(car.roll)?car.roll:surface.roll,bodyPitch=finite(car.bodyPitch,0),bodyRoll=finite(car.bodyRoll,0),bodyHeave=finite(car.bodyHeave,0),suspension=Array.isArray(car.suspension)?car.suspension:[],wheelSpin=Array.isArray(car.wheelSpin)?car.wheelSpin:null;node.root.position.set(car.x,carY,car.z);node.root.rotation.x=roadPitch;node.root.rotation.y=car.yaw;node.root.rotation.z=roadRoll;node.body.position.y=bodyHeave;node.body.rotation.x=bodyPitch;node.body.rotation.z=bodyRoll;
    if(!node.wheelRestY)node.wheelRestY=node.wheels.map(wheel=>wheel.pivot.position.y);
-   for(let wheelIndex=0;wheelIndex<node.wheels.length;wheelIndex++){const wheel=node.wheels[wheelIndex],contractIndex=wheelContractIndex(wheel),compression=clamp(finite(suspension[contractIndex],0),-.18,.34);wheel.pivot.position.y=node.wheelRestY[wheelIndex]+compression;if(wheel.front)wheel.pivot.rotation.y=car.steeringAngle||0;const spin=wheelSpin?finite(wheelSpin[contractIndex],car.speed/(wheel.radius||.43)):car.speed/(wheel.radius||.43);wheel.spin.rotation.x+=spin*stepDt;}
+   for(let wheelIndex=0;wheelIndex<node.wheels.length;wheelIndex++){const wheel=node.wheels[wheelIndex],contractIndex=wheelContractIndex(wheel),compression=clamp(finite(suspension[contractIndex],0),-.18,.34);wheel.pivot.position.y=wheel.wheelRestY??node.wheelRestY[wheelIndex];wheel.pivot.position.y=node.wheelRestY[wheelIndex]+compression;if(wheel.front)wheel.pivot.rotation.y=car.steeringAngle||0;const spin=wheelSpin?finite(wheelSpin[contractIndex],car.speed/(wheel.radius||.43)):car.speed/(wheel.radius||.43);wheel.spin.rotation.x+=spin*stepDt;}
    if(node.tailMaterial)node.tailMaterial.emissiveColor.set(.22+(car.brake||0)*.55,.003,.002);
   }
   const bodyX=Math.sin(renderPlayer.yaw),bodyZ=Math.cos(renderPlayer.yaw),speed=Math.max(0,renderPlayer.speed||0),velSpeed=Math.hypot(renderPlayer.vx||0,renderPlayer.vz||0);
@@ -100,5 +103,5 @@ export class RaceView extends CircuitView {
   this.updateScenery?.(stepDt,renderPlayer,race.phase);
   this.scene.render();
  }
- dispose(){if(this.disposed)return;this.effects?.dispose();this.effects=null;this.motion?.clear();this.disposed=true;this.revision=(this.revision||0)+1;super.dispose();}
+ dispose(){if(this.disposed)return;this.celShading?.dispose();this.effects?.dispose();this.effects=null;this.motion?.clear();this.disposed=true;this.revision=(this.revision||0)+1;super.dispose();}
 }

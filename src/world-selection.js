@@ -1,5 +1,6 @@
 import { buildMountainWorld } from './mountain-world.js';
 import { buildCityWorld } from './city-world.js';
+import { expandCityDistrict, auditCityDistrict } from './city-district.js';
 import { applyCelShading, registerCelPalette } from './cel-shading.js';
 import { installCelSurfaceDetails } from './cel-surface-details.js';
 import { installNightSkyline, NIGHT_SKYLINE } from './night-skyline.js';
@@ -27,7 +28,7 @@ export function applyNighttimeCel(view) {
   materialColors:{asphalt:'#35436a','city-ground':'#252b50',
    'city-building-0':'#3a497b','city-building-1':'#513a73',
    'city-building-2':'#285b70','city-building-3':'#613b67'},
-  materialTextureStrengths:{asphalt:0,'city-ground':0}
+  materialTextureStrengths:{asphalt:0,'city-ground':0,'district-road':.7,'district-pavement':.55}
  });
  view.celShading = applyCelShading(view, {
   palette:'city-night', bandCount:3, terminator:.28,
@@ -58,11 +59,17 @@ export function buildSelectedWorld(view) {
   const original = view.scenery.ready;
   view.scenery.ready = Promise.resolve(original).then(result => {
    if (view.scene.isDisposed) throw new Error('World loaded after scene disposal');
+   const city = track.id !== MOUNTAIN_TRACK;
+   if (city) view.scene.metadata.scenery.ready = false;
+   const district = city ? expandCityDistrict(view) : null;
    orientGroundSurfaces(view.scene);
-   if (track.id === MOUNTAIN_TRACK) applyDaytimeCel(view);
-   else applyNighttimeCel(view);
+   if (!city) applyDaytimeCel(view);
+   else { applyNighttimeCel(view); district.finish(); auditCityDistrict(view); view.scene.metadata.scenery.ready = true; }
    view.scene.metadata = { ...view.scene.metadata, selectedTrack: { id: track.id, name: track.name } };
    return result;
+  }).catch(error => {
+   if (view.scene.metadata?.scenery) view.scene.metadata.scenery.ready = false;
+   throw error;
   });
  } catch (error) {
   view.scenery = { ready: Promise.reject(error), update() {} };

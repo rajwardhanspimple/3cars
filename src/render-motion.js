@@ -18,9 +18,9 @@ export class RenderMotion {
  sample(race,now){
   this.resetCamera=false;
   const newest=this.frames.at(-1),gap=this.lastWall===null?0:Math.max(0,(now-this.lastWall)/1000);
-  if(this.race!==race||!newest||race.time<newest.time||gap>.25)return this.reset(race,now);
+  if(this.race!==race||!newest||race.time<newest.time)return this.reset(race,now);
   this.lastWall=now;
-  // Freeze exactly the last displayed pose, rather than jumping ahead on pause.
+  // Freeze exactly the last displayed pose, including after a hidden-tab pause.
   if(race.phase==='paused'){
    this.phase='paused';this.display=race.cars.map((car,i)=>({...car,...copyPose(this.display[i])}));return this.display;
   }
@@ -37,7 +37,7 @@ export class RenderMotion {
   }
   let latest=this.frames.at(-1);
   const stateDt=Math.max(0,race.time-latest.time);
-  if(stateDt>.25)return this.reset(race,now);
+  if(gap>.25||stateDt>.25)return this.reset(race,now);
   let discontinuity=false;
   for(let i=0;i<race.cars.length;i++){
    const car=race.cars[i],previous=latest.cars[i];

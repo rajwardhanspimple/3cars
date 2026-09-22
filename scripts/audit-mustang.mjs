@@ -1,23 +1,16 @@
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
-const id='4b1a593df06042e29dce6049b466f932';
+const source='https://sketchfab.com/3d-models/ford-mustang-2015-edition-4b1a593df06042e29dce6049b466f932';
 const url='https://raw.githubusercontent.com/ViktorVelizarov/Custom-Cars-3D/f3196e7c2f59e093ffdf891dd72a8428ce4d0fe4/public/mustang.gltf';
-const dir='asset-audit';await mkdir(dir,{recursive:true});
-const report={};
-try{
- const response=await fetch(`https://api.sketchfab.com/v3/models/${id}`,{signal:AbortSignal.timeout(30000)});
- report.sourceStatus=response.status;
- if(response.ok){const data=await response.json();report.original={name:data.name,author:data.user?.displayName,username:data.user?.username,license:data.license,isDownloadable:data.isDownloadable,vertexCount:data.vertexCount,faceCount:data.faceCount,description:data.description,viewerUrl:data.viewerUrl};}
-}catch(error){report.sourceError=error.message;}
-const response=await fetch(url,{signal:AbortSignal.timeout(60000)});if(!response.ok)throw Error(`Model HTTP ${response.status}`);
-const bytes=Buffer.from(await response.arrayBuffer());const sha=createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
-if(sha!=='5c8620a26ddfceca07df425c80e2d8f6703dd6df')throw Error('Source checksum mismatch');
-const gltf=JSON.parse(bytes.toString());
-report.asset=gltf.asset;report.byteLength=bytes.length;report.sha256=createHash('sha256').update(bytes).digest('hex');report.extensions=gltf.extensionsUsed;
-report.buffers=gltf.buffers?.map(b=>({byteLength:b.byteLength,uri:b.uri?.startsWith('data:')?'embedded':b.uri}));report.images=gltf.images?.map(i=>({name:i.name,uri:i.uri?.startsWith('data:')?'embedded':i.uri}));
-report.materials=gltf.materials?.map((m,i)=>({i,name:m.name,pbr:m.pbrMetallicRoughness,alphaMode:m.alphaMode,extensions:m.extensions}));
-report.nodes=gltf.nodes?.map((n,i)=>({i,name:n.name,children:n.children,mesh:n.mesh,t:n.translation,r:n.rotation,s:n.scale}));
-report.meshes=gltf.meshes?.map((m,i)=>({i,name:m.name,parts:m.primitives.map(p=>({mat:p.material,count:gltf.accessors[p.indices]?.count,min:gltf.accessors[p.attributes.POSITION]?.min,max:gltf.accessors[p.attributes.POSITION]?.max}))}));
-await writeFile(`${dir}/report.json`,JSON.stringify(report,null,2));await writeFile(`${dir}/mustang.gltf`,bytes);
-console.log(JSON.stringify(report));
-if(report.original?.license?.slug!=='by')throw Error('Original CC BY license not confirmed. Do not distribute the asset.');
+await mkdir('asset-audit',{recursive:true});const report={source};
+try{const r=await fetch('https://api.sketchfab.com/v3/models/4b1a593df06042e29dce6049b466f932',{signal:AbortSignal.timeout(20000)});report.sourceStatus=r.status;if(r.ok){const data=await r.json();report.original={name:data.name,license:data.license,author:data.user?.displayName};}}catch(e){report.sourceError=e.message;}
+const response=await fetch(url,{signal:AbortSignal.timeout(60000)});if(!response.ok)throw Error(`Model HTTP ${response.status}`);const bytes=Buffer.from(await response.arrayBuffer());
+if(createHash('sha256').update(bytes).digest('hex')!=='7bc4cd2e0e71730235b31cd5aa521e5511be81f61fa5b2da2bb62a9d478b7396')throw Error('Checksum mismatch');
+const g=JSON.parse(bytes.toString());const credit=g.asset.extras;
+if(credit.source!==source||!credit.license.startsWith('CC-BY-4.0')||!credit.author.includes('WarEntertainment'))throw Error('Embedded attribution mismatch');
+report.licenseEvidence='Pinned Sketchfab-exported glTF asset.extras. Original live listing currently unavailable; no claim of live verification.';
+report.credit=credit;report.triangles=g.meshes.reduce((sum,m)=>sum+m.primitives.reduce((n,p)=>n+g.accessors[p.indices].count/3,0),0);
+report.materials=g.materials.map((m,i)=>({i,name:m.name}));
+report.transforms=g.nodes.map((n,i)=>({i,name:n.name,matrix:n.matrix,translation:n.translation,rotation:n.rotation,scale:n.scale})).filter(n=>n.matrix||n.translation||n.rotation||n.scale);
+report.parts=g.nodes.filter(n=>n.mesh!==undefined).map(n=>({node:n.name,parts:g.meshes[n.mesh].primitives.map(p=>({material:g.materials[p.material].name,count:g.accessors[p.indices].count,min:g.accessors[p.attributes.POSITION].min,max:g.accessors[p.attributes.POSITION].max}))}));
+await writeFile('asset-audit/report.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));

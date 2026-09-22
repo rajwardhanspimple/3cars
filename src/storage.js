@@ -1,4 +1,5 @@
-const KEY='3cars.records.sakura-v1';
+const KEY='3cars.records.mountain-preview-v1';
+const SAKURA_KEY='3cars.records.sakura-v1';
 const ARCADE_KEY='3cars.records.arcade-v1';
 const LEGACY_KEY='3cars.records';
 const DEFAULTS={carId:'vortex',weather:'dry',muted:false,quality:'high'};
@@ -16,18 +17,17 @@ function cleanRace(r){
  return {carId:r.carId,weather:r.weather,position:r.position,time:r.time,penalty:r.penalty,bestLap:r.bestLap,finishedAt:r.finishedAt};
 }
 function migratedSettings(storage){
- const arcadeText=storage.getItem(ARCADE_KEY);
- if(arcadeText!==null){
-  let arcadeData;
-  try{arcadeData=JSON.parse(arcadeText);}catch{return null;}
-  return object(arcadeData)&&arcadeData.version===1?cleanSettings(arcadeData.settings):null;
+ for(const key of [SAKURA_KEY,ARCADE_KEY,LEGACY_KEY]){
+  let text;
+  try{text=storage.getItem(key);}catch{return null;}
+  if(text===null)continue;
+  let data;
+  try{data=JSON.parse(text);}catch{return null;}
+  return object(data)&&data.version===1?cleanSettings(data.settings):null;
  }
- const legacyText=storage.getItem(LEGACY_KEY);
- if(legacyText===null)return null;
- let legacyData;
- try{legacyData=JSON.parse(legacyText);}catch{return null;}
- return object(legacyData)&&legacyData.version===1?cleanSettings(legacyData.settings):null;
+ return null;
 }
+
 export class LocalRecords {
  constructor(storage){
   this._storage=null;this._available=false;

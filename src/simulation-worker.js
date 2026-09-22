@@ -2,7 +2,7 @@ import {Race} from './sim.js';
 import {SimulationClock} from './simulation-clock.js';
 let race=new Race(),generation=0,sequence=0,input={},lastPublish=0,waiting=false;
 const clock=new SimulationClock(dt=>race.step(dt,input));
-function snapshot(){return{generation,sequence:++sequence,state:{phase:race.phase,time:race.time,countdown:race.countdown,firstFinish:race.firstFinish,pausedPhase:race.pausedPhase,cars:race.cars}};}
+function snapshot(){return{generation,sequence:++sequence,state:{phase:race.phase,time:race.time,countdown:race.countdown,firstFinish:race.firstFinish,pausedPhase:race.pausedPhase,cars:race.cars,props:race.props}};}
 function publish(id){self.postMessage({type:id===undefined?'state':'reply',id,...snapshot()});if(id===undefined)waiting=true;}
 self.addEventListener('message',({data})=>{
  const {type,id}=data;

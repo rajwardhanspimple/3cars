@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {Race,ARCADE} from '../src/sim.js';
+import {Race,ARCADE,angle} from '../src/sim.js';
 
 function place(r,speed=0,s=50){
   const c=r.player,p=r.track.at(s);
@@ -13,6 +13,25 @@ function driveOnSameSurface(r,seconds,input,s=50){
     r.player.x=p.x;r.player.z=p.z;r.player.hint=p.index;
     r.drive(r.player,input,1/120);
   }
+}
+const radians=degrees=>degrees*Math.PI/180;
+function trace(r,seconds,input,hz=120){
+  const c=r.player,p=r.track.at(50),samples=[];let turned=0,previous=c.yaw;
+  for(let i=0;i<Math.round(seconds*hz);i++){
+    c.x=p.x;c.z=p.z;c.hint=p.index;r.drive(c,input,1/hz);
+    turned+=angle(c.yaw-previous);previous=c.yaw;
+    const longitudinal=c.vx*Math.sin(c.yaw)+c.vz*Math.cos(c.yaw),lateral=c.vx*Math.cos(c.yaw)-c.vz*Math.sin(c.yaw);
+    const measured=Math.atan2(lateral,Math.max(Math.abs(longitudinal),1));
+    assert.ok(Math.abs(c.driftAngle-measured)<1e-10,'slip must be measured from momentum');
+    assert.ok([c.driftAngle,c.yawRate,c.speed,longitudinal,lateral].every(Number.isFinite));
+    samples.push({time:(i+1)/hz,slip:c.driftAngle,yawRate:c.yawRate,speed:c.speed,forward:longitudinal,lateral,turned,drifting:c.drifting});
+  }
+  return samples;
+}
+function assertNoWobble(samples,key,tolerance){
+  let variation=0;for(let i=1;i<samples.length;i++)variation+=Math.abs(samples[i][key]-samples[i-1][key]);
+  const net=Math.abs(samples.at(-1)[key]-samples[0][key]);
+  assert.ok(variation-net<tolerance,`${key} oscillation: excess variation ${variation-net}`);
 }
 
 test('steering reaches arcade turn-in response within 100ms',()=>{
@@ -29,25 +48,72 @@ test('steering direction reversal is faster than normal turn-in',()=>{
   assert.ok(c.steeringAngle<-.3,`steeringAngle ${c.steeringAngle}`);
 });
 
-test('high speed steering remains bounded and nonnegative',()=>{
-  const r=new Race();r.phase='racing';const c=place(r,60);
-  driveOnSameSurface(r,1,{throttle:1,steer:.9});
-  assert.ok(Number.isFinite(c.yawRate));
-  assert.ok(Math.abs(c.yawRate)<1.2,`yawRate ${c.yawRate}`);
-  assert.ok(c.speed>=0);
-  assert.ok(Math.abs(c.driftAngle)<.02);
+test('high speed and moderate steering stay gripped, finite and free of yaw wobble',()=>{
+  for(const hz of [30,120])for(const scenario of [
+    {speed:60,seconds:1,input:{throttle:1,steer:.9},yawLimit:1.2},
+    {speed:30,seconds:1.5,input:{throttle:.5,steer:.45},yawLimit:1.3}
+  ]){
+    const r=new Race();r.phase='racing';place(r,scenario.speed);
+    const samples=trace(r,scenario.seconds,scenario.input,hz);
+    for(const s of samples){
+      assert.ok(Math.abs(s.slip)<radians(5),`${hz}Hz normal corner slip ${s.slip}`);
+      assert.ok(Math.abs(s.yawRate)<scenario.yawLimit,`yawRate ${s.yawRate}`);
+      assert.ok(s.yawRate>=0);assert.ok(s.speed>=0);assert.ok(s.forward>0);assert.equal(s.drifting,false);
+    }
+    assert.ok(Math.abs(samples.at(-1).slip)>radians(.2),'loaded tires should show nonzero steady slip');
+    assertNoWobble(samples.filter(s=>s.time>=scenario.seconds-.3),'yawRate',.08);
+  }
 });
 
-test('handbrake opens a bounded assisted drift and recovers after release',()=>{
-  const r=new Race();r.phase='racing';const c=place(r,26);
-  driveOnSameSurface(r,.5,{throttle:.6,steer:1,handbrake:true});
-  assert.equal(c.handbrake,true);
-  assert.equal(c.drifting,true);
-  assert.ok(c.driftAngle>.15&&c.driftAngle<=ARCADE.maxDriftAngle,`driftAngle ${c.driftAngle}`);
-  driveOnSameSurface(r,1.05,{throttle:.6,steer:1,handbrake:false});
-  assert.equal(c.handbrake,false);
-  assert.equal(c.drifting,false);
-  assert.ok(Math.abs(c.driftAngle)<.03,`driftAngle ${c.driftAngle}`);
+test('handbrake builds measured slip promptly, sustains a bounded slide and recovers with centred steering',()=>{
+  const results=[];
+  for(const hz of [30,120]){
+    const r=new Race();r.phase='racing';const c=place(r,26);
+    const onset=trace(r,.5,{throttle:.6,steer:1,handbrake:true},hz);
+    assert.equal(c.handbrake,true);assert.equal(c.drifting,true);
+    // Target 18-24 degrees, with a 3-degree lower margin, not a weaker drift flag.
+    assert.ok(Math.abs(c.driftAngle)>=radians(15)&&Math.abs(c.driftAngle)<=radians(35),`${hz}Hz onset ${c.driftAngle}`);
+    assert.ok(onset.some(s=>s.time<=.4+1e-9&&Math.abs(s.slip)>=radians(8)),'Space tap must break rear grip within 400ms');
+    assert.ok(c.forwardSpeed>Math.abs(c.lateralSpeed));assert.ok(c.forwardSpeed>0);
+    const held=trace(r,1,{throttle:.6,steer:1,handbrake:true},hz),all=[...onset,...held];
+    for(const s of all){
+      assert.ok(Math.abs(s.slip)<radians(45),`${hz}Hz slide exceeds controllable window: ${s.slip}`);
+      assert.ok(Math.abs(s.yawRate)<3,`yawRate ${s.yawRate}`);assert.ok(s.speed>15,`${hz}Hz held speed ${s.speed}`);assert.ok(s.forward>0);
+    }
+    const turned=onset.at(-1).turned+held.at(-1).turned;
+    assert.ok(Math.abs(turned)<radians(150),`heading turned ${turned}`);
+    const plateau=held.filter(s=>s.time>=.6),magnitudes=plateau.map(s=>Math.abs(s.slip));
+    // The measured previous revision eased to 17.7 degrees as speed fell.
+    // Sustained slip may contract; positive divergence is the defect to reject.
+    assert.ok(Math.min(...magnitudes)>=radians(16)&&Math.max(...magnitudes)<=radians(40),`late slide ${magnitudes}`);
+    let low=magnitudes[0];
+    for(const magnitude of magnitudes){
+      assert.ok(magnitude-low<radians(4),'late slide is growing away from its settled envelope');
+      low=Math.min(low,magnitude);
+    }
+    results.push({hz,slip:c.driftAngle,speed:c.speed,yawRate:c.yawRate});
+    const recovery=trace(r,1,{throttle:0,steer:0,handbrake:false},hz);
+    assert.equal(c.handbrake,false);assert.equal(c.drifting,false);
+    assert.ok(Math.abs(c.driftAngle)<radians(5),`released slip ${c.driftAngle}`);
+    assert.ok(Math.abs(c.yawRate)<.2,`released yawRate ${c.yawRate}`);
+    assertNoWobble(recovery.filter(s=>s.time>=.5),'slip',radians(2));
+    assertNoWobble(recovery.filter(s=>s.time>=.5),'yawRate',.12);
+  }
+  // Pinned positions reset every 33ms vs 8ms; allow small transient differences,
+  // while independently enforcing the full handling envelope at each rate.
+  assert.ok(Math.abs(results[0].slip-results[1].slip)<radians(2),'30/120Hz slip differs');
+  assert.ok(Math.abs(results[0].yawRate-results[1].yawRate)<.1,'30/120Hz yaw differs');
+  assert.ok(Math.abs(results[0].speed-results[1].speed)<.5,'30/120Hz speed differs');
+});
+
+test('counter-steering retains authority after handbrake breakaway',()=>{
+  for(const hz of [30,120]){
+    const r=new Race();r.phase='racing';const c=place(r,26);
+    trace(r,.5,{throttle:.6,steer:1,handbrake:true},hz);const slip=Math.abs(c.driftAngle);
+    const samples=trace(r,1,{throttle:.4,steer:-.6,handbrake:false},hz);
+    assert.ok(slip>=radians(15),`${hz}Hz counter-steer initial slip ${slip}`);assert.ok(Math.abs(c.driftAngle)<radians(5));assert.ok(Math.abs(c.driftAngle)<slip/2);
+    assert.ok(samples.every(s=>Math.abs(s.slip)<radians(45)&&s.forward>0));
+  }
 });
 
 test('velocity scalar does not resurrect stale pre-collision speed',()=>{

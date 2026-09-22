@@ -4,4 +4,5 @@ test-results/
 playwright-report/
 .DS_Store
 assets/*.gltf
+assets/environment/
 asset-audit/

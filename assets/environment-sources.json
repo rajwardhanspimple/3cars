@@ -1,0 +1,22 @@
+{
+  "licenseEvidence": [
+    {"url":"https://polyhaven.com/license","license":"CC0-1.0","verifiedVia":"Hyperbrowser","notes":"Asset use, modification and redistribution allowed. Website content is not included."},
+    {"url":"https://sketchfab.com/3d-models/detag-cherry-blossom-tree-db1b69851fd449928d36767c4f15502d","license":"CC-BY-4.0","author":"Victor Souza (victormssouza)","verifiedVia":"Hyperbrowser","notes":"Creator listing identifies downloadable tree for DETAG. Mirror metadata must also match before use."}
+  ],
+  "cherry": {
+    "url":"https://raw.githubusercontent.com/CamiloLopezCO/GraphicModels/97d2a89ef15638b9339f082d23e173ff3c5c8032/detag_-_cherry_blossom_tree.glb",
+    "bytes":5387084,
+    "source":"https://sketchfab.com/3d-models/detag-cherry-blossom-tree-db1b69851fd449928d36767c4f15502d",
+    "creator":"victormssouza",
+    "license":"CC-BY-4.0"
+  },
+  "greenTree":{"id":"jacaranda_tree","api":"https://api.polyhaven.com/files/jacaranda_tree","resolution":"1k","license":"CC0-1.0"},
+  "textures":[
+    {"file":"asphalt-diff.jpg","url":"https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/asphalt_02/asphalt_02_diff_2k.jpg","md5":"336af399fd98a39ab986d8b3bf73b4ff"},
+    {"file":"asphalt-normal.jpg","url":"https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/asphalt_02/asphalt_02_nor_gl_2k.jpg","md5":"77ebd1cc0b020ccaa1c6b58f103d1f75"},
+    {"file":"asphalt-rough.jpg","url":"https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/asphalt_02/asphalt_02_rough_2k.jpg","md5":"6fe669ab38640ef2009d6a28d1ad5ee9"},
+    {"file":"rock-diff.jpg","url":"https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/mossy_rock/mossy_rock_diff_1k.jpg","md5":"a57fbbf55269eb64f8d40708fe3af26c"},
+    {"file":"rock-normal.jpg","url":"https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/mossy_rock/mossy_rock_nor_gl_1k.jpg","md5":"59370f9b3d068271c2bccfb414dc325b"},
+    {"file":"rock-rough.jpg","url":"https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/mossy_rock/mossy_rock_rough_1k.jpg","md5":"7eadb38815ad2569104d827ad8ac1572"}
+  ]
+}

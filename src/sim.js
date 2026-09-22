@@ -1,3 +1,5 @@
+import {CIRCUIT, trackBounds as computeTrackBounds} from './circuit.js';
+
 export const TAU = Math.PI * 2;
 export const LAPS = 5;
 export const HALF_WIDTH = 9;
@@ -29,12 +31,13 @@ const smooth = (a, b, rate, dt) => lerp(a, b, 1 - Math.exp(-rate * dt));
 const maxSteerFor = speed => 0.52 / (1 + Math.max(0, speed) * 0.012);
 
 export function makeTrack() {
-  const controls = [[-90,-130],[65,-130],[138,-104],[163,-45],[102,-6],[145,62],[92,128],[7,127],[-37,55],[-118,91],[-165,38],[-126,-18],[-151,-80]];
+  const controls = CIRCUIT.controls;
+  const samplesPerSegment = CIRCUIT.samplesPerSegment;
   const points = [];
   for (let k = 0; k < controls.length; k++) {
     const p0 = controls[mod(k - 1, controls.length)], p1 = controls[k], p2 = controls[(k + 1) % controls.length], p3 = controls[(k + 2) % controls.length];
-    for (let j = 0; j < 36; j++) {
-      const t = j / 36, t2 = t * t, t3 = t2 * t;
+    for (let j = 0; j < samplesPerSegment; j++) {
+      const t = j / samplesPerSegment, t2 = t * t, t3 = t2 * t;
       const value = n => 0.5 * ((2*p1[n]) + (-p0[n]+p2[n])*t + (2*p0[n]-5*p1[n]+4*p2[n]-p3[n])*t2 + (-p0[n]+3*p1[n]-3*p2[n]+p3[n])*t3);
       points.push({ x: value(0), z: value(1), s: 0 });
     }
@@ -67,14 +70,15 @@ export function makeTrack() {
     if(!best || best.distance>28) scan(points.map((_,i)=>i));
     best.s=mod(best.s,length); return best;
   }
-  return {points,length,at,curvature,project, gates:24, gateSize:length/24};
+  return {id:CIRCUIT.id,name:CIRCUIT.name,bounds:computeTrackBounds(points),points,length,at,curvature,project, gates:24, gateSize:length/24};
 }
 
 function createCar(model,index,track) {
   const progress=-10-index*7, p=track.at(progress,(index%2 ? -1 : 1)*2.2);
   return {model,index,name:index===0?'You':index===1?'Mara':'Ellis',x:p.x,z:p.z,yaw:p.heading,vx:0,vz:0,speed:0,steer:0,steerTarget:0,steerReversing:false,throttle:0,brake:0,yawRate:0,gear:1,rpm:900,slip:0,tc:false,abs:false,
     nitro:100,nitroCooldown:0,boostActive:false,drifting:false,driftAngle:0,handbrake:false,steeringAngle:0,
-    progress,previousS:p.s,hint:p.index,nextGate:0,lap:1,lapStart:null,lapTimes:[],lapValid:true,bestLap:null,finished:false,finishTime:null,penalty:0,damage:{engine:0,steering:0,tires:0},offTime:0,offStart:0,offPenalized:false,impact:0,impactCooldown:0,stuckTime:0,repairCooldown:0,notification:'',noticeUntil:0};
+    progress,previousS:p.s,hint:p.index,nextGate:0,lap:1,lapStart:null,lapTimes:[],lapValid:true,bestLap:null,finished:false,finishTime:null,penalty:0,damage:{engine:0,steering:0,tires:0},offTime:0,offStart:0,offPenalized:false,impact:0,impactCooldown:0,stuckTime:0,repairCooldown:0,notification:'',noticeUntil:0,
+    aiDrift:{active:false,hold:0,cooldown:index===1?.35:.95,recover:0,side:0}};
 }
 
 export class Race {
@@ -87,6 +91,7 @@ export class Race {
   stopTransient(car, cooldown=false) {
     if(cooldown&&car.boostActive) car.nitroCooldown=ARCADE.nitroCooldown;
     car.boostActive=false; car.drifting=false; car.handbrake=false; car.driftAngle=smooth(car.driftAngle,0,ARCADE.yawRateResponse,1/30);
+    if(car.aiDrift) {car.aiDrift.active=false;car.aiDrift.hold=0;car.aiDrift.recover=Math.max(car.aiDrift.recover,.4);}
   }
   pause() {
     if(['countdown','racing'].includes(this.phase)) {this.pausedPhase=this.phase;this.phase='paused';this.cars.forEach(c=>this.stopTransient(c,true));}
@@ -100,12 +105,12 @@ export class Race {
     const p=this.track.at(safe,car.index===0?0:2.8*(car.index===1?1:-1));
     const interruptedBoost=car.boostActive;
     car.x=p.x;car.z=p.z;car.yaw=p.heading;car.vx=0;car.vz=0;car.speed=0;car.steer=0;car.steerTarget=0;car.steerReversing=false;car.yawRate=0;car.progress=safe;car.previousS=p.s;car.hint=p.index;car.offTime=0;car.offPenalized=false;car.stuckTime=0;car.repairCooldown=3;
-    car.boostActive=false;car.drifting=false;car.driftAngle=0;car.handbrake=false;car.steeringAngle=0;if(interruptedBoost) car.nitroCooldown=ARCADE.nitroCooldown;
+    car.boostActive=false;car.drifting=false;car.driftAngle=0;car.handbrake=false;car.steeringAngle=0;if(car.aiDrift){car.aiDrift.active=false;car.aiDrift.hold=0;car.aiDrift.cooldown=Math.max(car.aiDrift.cooldown,2);car.aiDrift.recover=1;}if(interruptedBoost) car.nitroCooldown=ARCADE.nitroCooldown;
     if(kind==='repair') car.damage={engine:0,steering:0,tires:0};
     this.penalty(car,PENALTIES[kind],kind==='repair'?'Repaired and returned':'Skipped checkpoint'); return true;
   }
 
-  ai(car) {
+  ai(car,dt=1/30) {
     const speed=Math.max(0,car.speed), look=8+speed*0.42;
     let lane=Math.sin(car.progress*0.009+car.index)*1.3;
     for(const other of this.cars) if(other!==car&&!other.finished) {
@@ -114,17 +119,56 @@ export class Race {
     }
     const target=this.track.at(car.progress+look,lane), error=angle(Math.atan2(target.x-car.x,target.z-car.z)-car.yaw);
     const rawSteer=Math.atan2(2*car.model.wheelbase*Math.sin(error),look);
-    const steer=clamp(rawSteer/(maxSteerFor(speed)*(1-car.damage.steering*.4)), -1, 1);
+    let steer=clamp(rawSteer/(maxSteerFor(speed)*(1-car.damage.steering*.4)), -1, 1);
     const longitudinalMu=car.model.grip*(this.weather==='wet'?0.66:1)*(1-car.damage.tires*.35);
     const cornerMu=longitudinalMu*ARCADE.gripBoost;
     let targetSpeed=car.model.topSpeed*.94;
+    let strongestCurvature=0;
     for(const d of [3,12,24,40,65,95]) {
-      const cur=Math.max(Math.abs(this.track.curvature(car.progress+d)),0.0003);
+      const sample=this.track.curvature(car.progress+d);
+      if(Math.abs(sample)>Math.abs(strongestCurvature)) strongestCurvature=sample;
+      const cur=Math.max(Math.abs(sample),0.0003);
       const corner=Math.sqrt(cornerMu*9.81/cur)*.82;
       targetSpeed=Math.min(targetSpeed,Math.sqrt(corner*corner+2*longitudinalMu*9.81*Math.max(0,d-10)*.74));
     }
     if(Math.abs(error)>0.75) targetSpeed=Math.min(targetSpeed,18);
-    return {throttle:clamp((targetSpeed-speed)*.7,0,1),brake:clamp((speed-targetSpeed)*.32,0,1),steer,boost:false,handbrake:false};
+    const input={throttle:clamp((targetSpeed-speed)*.7,0,1),brake:clamp((speed-targetSpeed)*.32,0,1),steer,boost:false,handbrake:false};
+    const drift=car.aiDrift;
+    if(!drift || car.index===0) return input;
+    drift.cooldown=Math.max(0,drift.cooldown-dt);
+    drift.recover=Math.max(0,drift.recover-dt);
+    const contact=this.track.project(car.x,car.z,car.hint);
+    const future=this.track.project(target.x,target.z);
+    const cornerSide=Math.sign(strongestCurvature)||Math.sign(error)||Math.sign(steer);
+    const speedCap=this.weather==='wet'?32:38;
+    const minSpeed=this.weather==='wet'?13:16;
+    const nearCars=this.cars.some(other=>{
+      if(other===car||other.finished) return false;
+      const gap=mod(other.progress-car.progress+this.track.length/2,this.track.length)-this.track.length/2;
+      if(Math.abs(gap)>22) return false;
+      const otherContact=this.track.project(other.x,other.z,other.hint);
+      return Math.abs(otherContact.lateral-contact.lateral)<5.5;
+    });
+    const scheduled=(Math.floor((car.progress+look)/this.track.gateSize)+car.index)%2===0;
+    const stable=Number.isFinite(speed)&&contact.distance<=HALF_WIDTH-1.1&&future.distance<=HALF_WIDTH-1.1&&BARRIER-contact.distance>7&&!nearCars&&car.offTime===0&&car.impactCooldown===0&&Math.abs(car.driftAngle)<.42&&car.slip<.58;
+    const cornerReady=Math.abs(strongestCurvature)>(this.weather==='wet'?.010:.012)&&Math.abs(strongestCurvature)<.085&&Math.abs(error)>.045&&Math.abs(error)<.68&&Math.abs(steer)>.18&&Math.sign(steer)===cornerSide;
+    const speedReady=speed>=minSpeed&&speed<=speedCap&&targetSpeed<=speed+4;
+    if(drift.active&&(!stable||speed>speedCap+3||Math.sign(steer)!==drift.side)) {
+      drift.active=false;drift.hold=0;drift.recover=.7;drift.cooldown=Math.max(drift.cooldown,2.4);
+    }
+    if(!drift.active&&drift.cooldown===0&&drift.recover===0&&scheduled&&stable&&cornerReady&&speedReady) {
+      drift.active=true;drift.hold=this.weather==='wet'?.30:.42;drift.cooldown=(this.weather==='wet'?4.6:4.1)+car.index*.35;drift.side=cornerSide;
+    }
+    if(drift.active) {
+      drift.hold-=dt;
+      input.handbrake=drift.hold>0&&stable&&cornerReady&&speedReady;
+      input.boost=false;
+      input.steer=clamp(steer+drift.side*.08,-1,1);
+      input.throttle=Math.min(input.throttle,this.weather==='wet'?.48:.58);
+      input.brake=Math.max(input.brake,speed>targetSpeed+1.5?.12:0);
+      if(!input.handbrake) {drift.active=false;drift.recover=.55;}
+    }
+    return input;
   }
 
   step(dt,input={}) {
@@ -136,7 +180,7 @@ export class Race {
     for(const car of this.cars) {
       car.impactCooldown=Math.max(0,car.impactCooldown-dt);car.repairCooldown=Math.max(0,car.repairCooldown-dt);
       if(car.finished) {this.stopTransient(car,false);continue;}
-      this.drive(car,car.index===0?input:this.ai(car),dt);
+      this.drive(car,car.index===0?input:this.ai(car,dt),dt);
       this.advance(car,dt);
       if(car.index>0) { car.stuckTime=car.speed<2?car.stuckTime+dt:0; if(car.stuckTime>5)this.repair(car); }
     }

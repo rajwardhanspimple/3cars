@@ -7,8 +7,17 @@ test('closed circuit sampling, projection, and length are consistent',()=>{
  for(let s=0;s<t.length;s+=17){const p=t.at(s),q=t.project(p.x,p.z);assert.ok(q.distance<.1);assert.ok(Math.abs(q.s-s)<.2);}
  assert.ok(Math.hypot(t.at(0).x-t.at(t.length).x,t.at(0).z-t.at(t.length).z)<1e-8);
 });
-test('drive-based acceleration and braking stay isolated from opponents',()=>{
- for(const weather of ['dry','wet']){const r=new Race({weather});r.phase='racing';for(let i=0;i<120;i++)r.drive(r.player,{throttle:1},1/120);assert.ok(r.player.speed>2);for(let i=0;i<240;i++)r.drive(r.player,{brake:1},1/120);assert.ok(r.player.speed<.1,`${weather}: braking should stop the car`);}
+test('drive-based acceleration, braking to rest, then held brake reverse stay isolated from opponents',()=>{
+ for(const weather of ['dry','wet']){
+  const r=new Race({weather});r.phase='racing';
+  for(let i=0;i<120;i++)r.drive(r.player,{throttle:1},1/120);
+  assert.ok(r.player.forwardSpeed>2);
+  let stopped=false;
+  for(let i=0;i<240;i++){r.drive(r.player,{brake:1},1/120);if(Math.abs(r.player.forwardSpeed)<.6)stopped=true;}
+  assert.ok(stopped,`${weather}: braking must pass through rest before reversing`);
+  assert.ok(r.player.forwardSpeed<-1,`${weather}: held brake must engage reverse`);
+  assert.ok(r.player.forwardSpeed>=-11.1);assert.equal(r.player.boostActive,false);
+ }
 });
 test('countdown, pause and fixed-step safety',()=>{const r=new Race();r.start();stepFor(r,2);assert.equal(r.time,0);stepFor(r,1.1);assert.equal(r.phase,'racing');const time=r.time;r.pause();stepFor(r,1,{throttle:1,boost:true});assert.equal(r.time,time);assert.equal(r.player.boostActive,false);r.pause();r.step(NaN);assert.ok(Number.isFinite(r.time));});
 

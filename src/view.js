@@ -1,5 +1,6 @@
 import { HALF_WIDTH, BARRIER, clamp } from './sim.js';
 import { buildScenicWorld } from './scenic-world.js';
+import { orientGroundSurfaces } from './surface-geometry.js';
 const B=globalThis.BABYLON;
 const v=(x=0,y=0,z=0)=>new B.Vector3(x,y,z);
 const color=hex=>B.Color3.FromHexString(hex);
@@ -29,7 +30,7 @@ export class RaceView {
  merge(meshes,name){if(!meshes.length)return;const groups=new Map();for(const mesh of meshes){const key=mesh.material||'none';if(!groups.has(key))groups.set(key,[]);groups.get(key).push(mesh);}let last;for(const [material,group]of groups){const merged=B.Mesh.MergeMeshes(group,true,true,undefined,false,false);if(merged){merged.name=groups.size>1?`${name}-${material.name||'material'}`:name;merged.material=material==='none'?null:material;merged.receiveShadows=true;merged.freezeWorldMatrix();last=merged;}}return last;}
  freezeStaticWorld(){for(const mesh of this.scene.meshes)if(!mesh.name.startsWith('car-')&&!mesh.name.includes('wheel'))mesh.freezeWorldMatrix();}
  sign(text,pos,width=10,height=2,parent=null){const tex=new B.DynamicTexture('sign-text',{width:1024,height:256},this.scene,false),ctx=tex.getContext();ctx.fillStyle='#153347';ctx.fillRect(0,0,1024,256);ctx.fillStyle='#f2f6f8';ctx.font='bold 115px Arial';ctx.textAlign='center';ctx.fillText(text,512,169);tex.update();const mat=new B.StandardMaterial('sign',this.scene);mat.diffuseTexture=tex;mat.emissiveColor=color('#758c97');mat.specularColor=B.Color3.Black();mat.backFaceCulling=false;const mesh=B.MeshBuilder.CreatePlane('sign',{width,height},this.scene);mesh.material=mat;mesh.position=v(...pos);if(parent)mesh.parent=parent;return mesh;}
- createWorld(){buildScenicWorld(this);}
+ createWorld(){buildScenicWorld(this);orientGroundSurfaces(this.scene);}
  updateScenery(dt,player,phase){if(this.scenery&&this.scenery.update)this.scenery.update(dt,player,phase);}
  createCar(car){
   const root=new B.TransformNode(`car-${car.index}`,this.scene),body=new B.TransformNode('suspension',this.scene);body.parent=root;

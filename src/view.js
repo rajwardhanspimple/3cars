@@ -1,15 +1,15 @@
 import { HALF_WIDTH, BARRIER, clamp } from './sim.js';
-import { buildMountainWorld } from './mountain-world.js';
-import { orientGroundSurfaces } from './surface-geometry.js';
+import { buildSelectedWorld } from './world-selection.js';
+import { trackInfo } from './tracks.js';
 const B=globalThis.BABYLON;
 const v=(x=0,y=0,z=0)=>new B.Vector3(x,y,z);
 const color=hex=>B.Color3.FromHexString(hex);
 
 export class RaceView {
- constructor(canvas,race,{quality='high'}={}) 
+ constructor(canvas,race,{quality='high',trackId}={}) 
 {
   if(!B||!B.Engine.IsSupported)throw new Error('WebGL is unavailable. Enable hardware acceleration and use a current desktop browser.');
-  this.canvas=canvas;this.race=race;this.quality=quality;this.reducedMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  this.canvas=canvas;this.race=race;this.quality=quality;this.trackId=trackInfo(trackId).id;this.reducedMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
   this.engine=new B.Engine(canvas,true,{preserveDrawingBuffer:false,stencil:true,powerPreference:'high-performance'});
   this.engine.setHardwareScalingLevel(quality==='high'?1/Math.min(devicePixelRatio,1.5):1.4);
   this.scene=new B.Scene(this.engine);const scene=this.scene;
@@ -33,7 +33,7 @@ window.addEventListener('resize',this.resize);
 merge(meshes,name){if(!meshes.length)return;const groups=new Map();for(const mesh of meshes){const key=mesh.material||'none';if(!groups.has(key))groups.set(key,[]);groups.get(key).push(mesh);}let last;for(const [material,group]of groups){const merged=B.Mesh.MergeMeshes(group,true,true,undefined,false,false);if(merged){merged.name=groups.size>1?`${name}-${material.name||'material'}`:name;merged.material=material==='none'?null:material;merged.receiveShadows=true;merged.freezeWorldMatrix();last=merged;}}return last;}
  freezeStaticWorld(){for(const mesh of this.scene.meshes)if(!mesh.name.startsWith('car-')&&!mesh.name.includes('wheel'))mesh.freezeWorldMatrix();}
  sign(text,pos,width=10,height=2,parent=null){const tex=new B.DynamicTexture('sign-text',{width:1024,height:256},this.scene,false),ctx=tex.getContext();ctx.fillStyle='#153347';ctx.fillRect(0,0,1024,256);ctx.fillStyle='#f2f6f8';ctx.font='bold 115px Arial';ctx.textAlign='center';ctx.fillText(text,512,169);tex.update();const mat=new B.StandardMaterial('sign',this.scene);mat.diffuseTexture=tex;mat.emissiveColor=color('#758c97');mat.specularColor=B.Color3.Black();mat.backFaceCulling=false;const mesh=B.MeshBuilder.CreatePlane('sign',{width,height},this.scene);mesh.material=mat;mesh.position=v(...pos);if(parent)mesh.parent=parent;return mesh;}
- createWorld(){buildMountainWorld(this);orientGroundSurfaces(this.scene);this.ready=this.scenery?.ready||Promise.resolve();}
+ createWorld(){buildSelectedWorld(this);}
  updateScenery(dt,player,phase){if(this.scenery&&this.scenery.update)this.scenery.update(dt,player,phase);}
  
 createCar(car){
@@ -69,5 +69,5 @@ render(dt){
   if(race.weather==='wet'){for(let i=0;i<this.rainLines.length;i++){const x=p.x+Math.sin(i*127.1)*25,z=p.z+Math.cos(i*311.7)*25,y=((i*.71-this.elapsed*23)%20+20)%20;this.rainLines[i][0].set(x,y,z);this.rainLines[i][1].set(x-.18,y-1.2,z+.08);}B.MeshBuilder.CreateLineSystem('rain',{lines:this.rainLines,instance:this.rain});}
   this.scene.render();
  }
- dispose(){window.removeEventListener('resize',this.resize);this.scene.dispose();this.engine.dispose();}
+ dispose(){if(this._baseDisposed)return;this._baseDisposed=true;globalThis.window?.removeEventListener('resize',this.resize);this.scenery?.dispose?.();this.celShading?.dispose();this.scene.dispose();this.engine.dispose();}
 }

@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import B from 'babylonjs';
+
+// Same dependency guard as parent commit b31a5544: simulation CI has no npm dependencies.
+let B=null;
+try {({default:B}=await import('babylonjs'));} catch {}
+if (!B) {
+ test('cel shading suite skipped: babylonjs is not installed',{skip:'run npm install to exercise cel shading'},()=>{});
+} else {
 globalThis.BABYLON=B;
 const {applyCelShading,registerCelPalette,CEL_FRAGMENT_SHADER}=await import('../src/cel-shading.js');
 function fixture(quality='high') {
@@ -77,3 +83,4 @@ test('blended glass stays blended; grade, palettes, quality and outline budget a
   } finally {scene.dispose();view.engine.dispose();}
  }
 });
+}

@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import B from 'babylonjs';
+// Simulation-only CI deliberately does not install Babylon.
+let B = null;
+try { ({default:B} = await import('babylonjs')); } catch {}
+if (!B) {
+ test('city world suite skipped: babylonjs is not installed', {skip:'run npm install to exercise city rendering'}, () => {});
+} else {
 globalThis.BABYLON = B;
 const { Race, HALF_WIDTH, BARRIER } = await import('../src/sim.js');
 const { roadHeight, roadPose, surfaceRoughness } = await import('../src/mountain-layout.js');
@@ -18,7 +23,7 @@ function cleanup(view) { view.scene.dispose(); view.engine.dispose(); }
 const close = (a, b, eps = 1e-5) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
 const solids = view => view.scene.meshes.filter(mesh => mesh.metadata?.cityWorld && mesh.metadata.role === 'solid');
 
-for (const quality of ['high', 'low']) test(`city contract, metadata and shared geometry (${quality})`, async () => {
+for (const quality of ['high', 'medium']) test(`city contract, metadata and shared geometry (${quality})`, async () => {
  const view = fixture(quality), before = JSON.stringify(view.race);
  try {
   const scenery = buildCityWorld(view);
@@ -86,10 +91,9 @@ test('every rail is at the shared barrier offset with analytic road pose', async
  } finally { cleanup(view); }
 });
 
-// A circle enclosing the full transformed XZ bounding box proves clearance
-// from every track segment, including other legs of a hairpin. This is stronger
-// than checking only mesh vertices. Road paint/ground/sky intentionally excluded.
-for (const quality of ['high', 'low']) test(`no scenery solid intersects the driveable corridor (${quality})`, async () => {
+// Bounding circles conservatively enclose the transformed XZ bounds. Ground,
+// road paint and sky intentionally overlap the road; solid scenery must not.
+for (const quality of ['high', 'medium']) test(`no scenery solid intersects the driveable corridor (${quality})`, async () => {
  const view = fixture(quality);
  try {
   await buildCityWorld(view).ready;
@@ -132,7 +136,7 @@ test('props follow race state and reset without allocations; paused/reduced moti
  } finally { cleanup(view); }
 });
 
-test('procedural layouts and texture bytes are deterministic across builds', async () => {
+test('procedural layouts are deterministic across builds', async () => {
  const a = fixture(), b = fixture();
  try {
   await Promise.all([buildCityWorld(a).ready, buildCityWorld(b).ready]);
@@ -154,3 +158,4 @@ test('ready rejects construction/texture failures and disposed scenes', async ()
  try { const world = buildCityWorld(dead); dead.scene.dispose(); await assert.rejects(world.ready, /disposed/); }
  finally { cleanup(dead); }
 });
+}

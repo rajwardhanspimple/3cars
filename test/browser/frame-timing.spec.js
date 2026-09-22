@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './fixtures.js';
 test('race countdown advances on worker time with full-resolution model',async({page})=>{
  const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/');await expect(page.locator('#start')).toBeEnabled({timeout:120000});await page.locator('#quality').selectOption('medium');await expect(page.locator('body')).toHaveAttribute('data-loading','false',{timeout:120000});
  await page.locator('#start').click();await expect(page.locator('body')).toHaveAttribute('data-phase','racing',{timeout:15000});await page.keyboard.press('p');await expect(page.locator('#pause-panel')).toBeVisible();

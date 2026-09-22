@@ -3,7 +3,7 @@ on:
   push:
     paths:
       - test/browser/frame-timing.spec.js
-      - test/browser/worker-diagnostic.spec.js
+      - test/browser/arcade.spec.js
       - .github/workflows/model-diagnostic.yml
   workflow_dispatch:
 permissions:
@@ -20,4 +20,4 @@ jobs:
       - run: npm install --ignore-scripts --no-audit --no-fund
       - run: npm run build
       - run: npx playwright install --with-deps chromium > /tmp/chromium.log 2>&1 || (tail -30 /tmp/chromium.log; exit 1)
-      - run: npx playwright test test/browser/worker-diagnostic.spec.js --reporter=list,./test/browser/live-reporter.js
+      - run: npx playwright test test/browser/arcade.spec.js test/browser/frame-timing.spec.js --reporter=list,./test/browser/live-reporter.js

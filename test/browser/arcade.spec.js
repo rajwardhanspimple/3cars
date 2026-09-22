@@ -1,9 +1,10 @@
 import {test,expect} from '@playwright/test';
 
-test('countdown and keyboard boost keep working when graphics rendering stops',async({page})=>{
- const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/');await expect(page.locator('#start')).toBeEnabled({timeout:120000});
- // Keep browser animation scheduling intact for input and UI. Suspend only game rendering.
- await page.evaluate(async()=>{const {RaceView}=await import('/src/mustang-view.js');RaceView.prototype.render=function(){};});
+test('countdown and keyboard boost work without any graphics frames',async({page})=>{
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ // Disable only the scene render method before boot. Do not enqueue GPU work first.
+ await page.route('**/src/boot.js',route=>route.fulfill({contentType:'text/javascript',body:`import {RaceView} from './mustang-view.js';RaceView.prototype.render=function(){};import('./main.js');`}));
+ await page.goto('/');await expect(page.locator('#start')).toBeEnabled({timeout:120000});
  await page.locator('#start').click();await expect(page.locator('body')).toHaveAttribute('data-phase','racing',{timeout:15000});
  await page.keyboard.down('w');await expect.poll(()=>page.locator('#speed').textContent().then(Number),{timeout:10000}).toBeGreaterThan(20);
  await page.keyboard.down('Shift');await expect(page.locator('body')).toHaveAttribute('data-boost','true');await expect.poll(()=>page.locator('#nitro-meter').evaluate(el=>el.value),{timeout:5000}).toBeLessThan(95);
@@ -12,16 +13,17 @@ test('countdown and keyboard boost keep working when graphics rendering stops',a
  await page.locator('#resume').click();await expect(page.locator('body')).toHaveAttribute('data-phase','racing');await expect.poll(()=>page.locator('#nitro-meter').evaluate(el=>el.value),{timeout:10000}).toBeGreaterThan(charge);
  await page.keyboard.down('w');await expect.poll(()=>page.locator('#speed').textContent().then(Number),{timeout:10000}).toBeGreaterThan(35);
  await page.keyboard.down('d');await page.keyboard.down('Space');await expect(page.locator('body')).toHaveAttribute('data-drifting','true',{timeout:3000});await page.keyboard.up('Space');await page.keyboard.up('d');await page.keyboard.up('w');await expect(page.locator('body')).toHaveAttribute('data-drifting','false',{timeout:3000});
- await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await expect(page.locator('#pause-panel')).toBeVisible();await expect(page.locator('body')).toHaveAttribute('data-boost','false');expect(errors).toEqual([]);
+ await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await expect(page.locator('#pause-panel')).toBeVisible();await expect(page.locator('body')).toHaveAttribute('data-boost','false');
+ await page.locator('#restart').click();await expect(page.locator('body')).toHaveAttribute('data-phase','countdown');expect(await page.locator('#nitro-meter').evaluate(el=>el.value)).toBe(100);
+ const stats=await page.evaluate(()=>{const s=BABYLON.Engine.Instances.at(-1).scenes[0];return{frame:s.getFrameId(),triangles:s.getTransformNodeByName('car-0').getChildMeshes().filter(m=>m.metadata?.mustang).reduce((n,m)=>n+m.getTotalIndices()/3,0)};});expect(stats.frame).toBe(0);expect(stats.triangles).toBe(1493119);expect(errors).toEqual([]);
 });
 
 test('worker clock and lifecycle commands run without a Babylon renderer',async({page})=>{
  await page.route('**/worker-test.html',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>Worker check</title>'}));await page.goto('/worker-test.html');
  const result=await page.evaluate(async()=>{
-  const worker=new Worker('/src/simulation-worker.js',{type:'module'});let latest;const pending=new Map();let next=1;
-  worker.onmessage=({data})=>{if(data.state)latest=data.state;if(data.type==='state')worker.postMessage({type:'ack',generation:1});if(data.type==='reply'){pending.get(data.id)?.resolve(data.state);pending.delete(data.id);}if(data.type==='error'){for(const p of pending.values())p.reject(Error(data.message));}};
-  const command=(type,extra={})=>new Promise((resolve,reject)=>{const id=next++;pending.set(id,{resolve,reject});worker.postMessage({type,id,generation:1,...extra});setTimeout(()=>{if(pending.delete(id))reject(Error('Worker timeout'));},8000);});
-  try{await command('reset',{config:{carId:'vortex',weather:'dry'}});await command('start');await new Promise(r=>setTimeout(r,3400));const phase=latest.phase,time=latest.time;await command('pause');const frozen=latest.time;await new Promise(r=>setTimeout(r,250));const unchanged=latest.time===frozen;await command('resume');await new Promise(r=>setTimeout(r,250));return{phase,time,unchanged,advanced:latest.time>frozen};}finally{worker.terminate();}
+  const {SimulationClient}=await import('/src/simulation-client.js');let latest;const client=new SimulationClient(state=>latest=state,error=>{throw error;});
+  const wait=ms=>new Promise(r=>setTimeout(r,ms));
+  try{await client.reset({carId:'vortex',weather:'dry'});await client.command('start');await wait(3400);const phase=latest.phase,time=latest.time;await client.command('pause');const frozen=latest.time;await wait(250);const unchanged=latest.time===frozen;await client.command('resume');await wait(250);const advanced=latest.time>frozen;await client.reset({carId:'apex',weather:'wet'});return{phase,time,unchanged,advanced,resetPhase:latest.phase,resetTime:latest.time,model:latest.cars[0].model.id};}finally{client.dispose();}
  });
- expect(result.phase).toBe('racing');expect(result.time).toBeGreaterThan(.15);expect(result.unchanged).toBe(true);expect(result.advanced).toBe(true);
+ expect(result.phase).toBe('racing');expect(result.time).toBeGreaterThan(.15);expect(result.unchanged).toBe(true);expect(result.advanced).toBe(true);expect(result.resetPhase).toBe('menu');expect(result.resetTime).toBe(0);expect(result.model).toBe('apex');
 });

@@ -21,6 +21,7 @@ function baseMaterialName(name=''){return String(name).replace(/^car-\d+-/,'');}
 function meshBaseName(name=''){return String(name).replace(/^car-\d+-/,'').replace(/^mustang-template-/,'');}
 function identity(mesh){mesh.parent=null;mesh.position.setAll(0);mesh.rotation.setAll(0);mesh.rotationQuaternion=null;mesh.scaling.setAll(1);mesh.computeWorldMatrix(true);}
 function copyTransform(target,source){target.position.copyFrom(source.position);target.rotation.copyFrom(source.rotation);target.scaling.copyFrom(source.scaling);target.rotationQuaternion=source.rotationQuaternion?.clone?.()||null;}
+function isDescendantOf(node,parent){for(let p=node?.parent;p;p=p.parent)if(p===parent)return true;return false;}
 
 function tuneMaterials(meshes,paintHex){
  for(const material of new Set(meshes.map(mesh=>mesh.material))){
@@ -99,7 +100,7 @@ async function loadAndPrepareMustang(view){
   else{mesh.parent=body;finalMeshes.push(mesh);}
  }
  tuneMaterials(finalMeshes,'#ffffff');
- for(const mesh of finalMeshes){mesh.receiveShadows=true;mesh.isPickable=false;mesh.name=`mustang-template-${meshBaseName(mesh.name)}`;mesh.metadata={mustang:true,template:true,sourceTriangles:MUSTANG_TRIANGLES};if(mesh.geometry)mesh.geometry.metadata={...mesh.geometry.metadata,mustangShared:true,sourceTriangles:MUSTANG_TRIANGLES};}
+ for(const mesh of finalMeshes){mesh.receiveShadows=true;mesh.isPickable=false;mesh.name=`mustang-template-${meshBaseName(mesh.name)}`;mesh.metadata={mustang:true,template:true,sourceTriangles:MUSTANG_TRIANGLES};if(mesh.geometry)mesh.geometry.metadata={...mesh.geometry.metadata,mustangShared:true,sourceTriangles:MUSTANG_TRIANGLES};mesh.setEnabled(false);}
  const count=triangleCount(finalMeshes);
  if(count!==MUSTANG_TRIANGLES)throw Error(`Full-resolution model verification failed: ${count}`);
  if(finalMeshes.length!==EXPECTED_MESHES)throw Error(`Unexpected Mustang mesh count: ${finalMeshes.length}`);
@@ -115,21 +116,42 @@ function preparedMustang(view){
  return promise;
 }
 function cloneMaterial(material,prefix){
- if(!material)return null;
+ if(!material?.clone)throw Error(`Missing Mustang material clone source for ${prefix}`);
  const base=baseMaterialName(material.name)||'material';
- const clone=material.clone?.(`${prefix}-${base}`)||material;
+ const clone=material.clone(`${prefix}-${base}`);
+ if(!clone||clone===material)throw Error(`Unable to clone Mustang material ${base}`);
  clone.name=`${prefix}-${base}`;
  return clone;
+}
+function assertClonedRig(prefix,template,wheels,meshes){
+ if(template.root.isEnabled())throw Error('Mustang source template must stay disabled');
+ if(template.meshes.some(mesh=>mesh.isEnabled(false)))throw Error('Mustang source template meshes must stay disabled');
+ for(let i=0;i<WHEEL_COUNT;i++){
+  const wheel=wheels[i],source=template.wheels[i];
+  if(!wheel||!source)throw Error(`Missing Mustang wheel node ${i}`);
+  if(wheel.pivot===source.pivot||wheel.spin===source.spin)throw Error(`Mustang wheel ${i} reused template nodes`);
+  if(wheel.pivot.rotation===source.pivot.rotation||wheel.spin.rotation===source.spin.rotation)throw Error(`Mustang wheel ${i} transform state is shared`);
+  const spinMeshes=meshes.filter(mesh=>isDescendantOf(mesh,wheel.spin));
+  const pivotMeshes=meshes.filter(mesh=>mesh.parent===wheel.pivot);
+  if(!spinMeshes.length)throw Error(`Mustang wheel ${i} has no spin meshes`);
+  if(!pivotMeshes.length)throw Error(`Mustang wheel ${i} has no pivot meshes`);
+  if([...spinMeshes,...pivotMeshes].some(mesh=>!mesh.isEnabled(false)))throw Error(`Mustang wheel ${i} cloned meshes are disabled`);
+ }
 }
 function cloneRig(view,template,car,orderIndex=0){
  const scene=view.scene,prefix=`car-${car?.index??orderIndex}`;
  const root=new B.TransformNode(prefix,scene),body=new B.TransformNode(`${prefix}-body`,scene);body.parent=root;copyTransform(body,template.body);
  const wheels=template.wheels.map((wheel,i)=>{const pivot=new B.TransformNode(`${prefix}-steer-${i}`,scene),spin=new B.TransformNode(`${prefix}-spin-${i}`,scene);pivot.parent=root;spin.parent=pivot;copyTransform(pivot,wheel.pivot);copyTransform(spin,wheel.spin);return{pivot,spin,front:wheel.front,radius:wheel.radius};});
+ const transformMap=new Map([[template.body,body]]);
+ for(let i=0;i<wheels.length;i++){transformMap.set(template.wheels[i].pivot,wheels[i].pivot);transformMap.set(template.wheels[i].spin,wheels[i].spin);}
  const materialMap=new Map(),meshMap=[];
  for(const source of template.meshes){
-  const parent=source.parent===template.body?body:wheels.find(w=>source.parent===w.pivot)?.pivot||wheels.find(w=>source.parent===w.spin)?.spin||body;
+  const parent=transformMap.get(source.parent);
+  if(!parent)throw Error(`Missing Mustang transform clone for ${source.name}`);
   const mesh=source.clone(`${prefix}-${meshBaseName(source.name)}`,parent,true);
-  copyTransform(mesh,source);
+  if(!mesh)throw Error(`Unable to clone Mustang mesh ${source.name}`);
+  copyTransform(mesh,source);mesh.setEnabled(true);
+  if(mesh.geometry!==source.geometry)throw Error(`Mustang geometry was not shared for ${mesh.name}`);
   let material=materialMap.get(source.material);
   if(material===undefined){material=cloneMaterial(source.material,prefix);materialMap.set(source.material,material);}
   mesh.material=material;mesh.receiveShadows=true;mesh.isPickable=false;
@@ -141,6 +163,7 @@ function cloneRig(view,template,car,orderIndex=0){
  const count=triangleCount(meshMap);
  if(count!==MUSTANG_TRIANGLES)throw Error(`Full-resolution model verification failed for ${prefix}: ${count}`);
  if(meshMap.length!==EXPECTED_MESHES)throw Error(`Unexpected Mustang mesh count for ${prefix}: ${meshMap.length}`);
+ assertClonedRig(prefix,template,wheels,meshMap);
  root.metadata={model:'Ford Mustang 2015 EDITION',imported:true,triangles:count,originalTriangles:MUSTANG_TRIANGLES,geometrySimplified:false,wheelCenters:template.root.metadata.wheelCenters,wheelCount:WHEEL_COUNT,meshCount:meshMap.length,geometryShared:true};
  const paint=meshMap.find(m=>baseMaterialName(materialName(m))==='CARPAINT')?.material||null;
  const tailMaterial=meshMap.find(m=>baseMaterialName(materialName(m))==='RedGlass')?.material||null;
@@ -184,5 +207,5 @@ export function createCarEnvironment(scene){
   }faces.push(data);
  }
  const texture=new B.RawCubeTexture(scene,faces,size,B.Engine.TEXTUREFORMAT_RGBA,B.Engine.TEXTURETYPE_UNSIGNED_BYTE,true,false,B.Texture.TRILINEAR_SAMPLINGMODE);
- texture.name='Meridian sky reflections';texture.gammaSpace=false;texture.coordinatesMode=B.Texture.CUBIC_MODE;scene.environmentTexture=texture;scene.environmentIntensity=.7;return texture;
+ texture.name='Sakura sky reflections';texture.gammaSpace=false;texture.coordinatesMode=B.Texture.CUBIC_MODE;scene.environmentTexture=texture;scene.environmentIntensity=.7;return texture;
 }

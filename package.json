@@ -1,9 +1,9 @@
 {
   "name": "3cars",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "A desktop-browser GT racing game with three original cars and two AI rivals",
+  "description": "Sakura Valley browser racing with three full-detail Mustangs and AI drifting",
   "engines": { "node": ">=22" },
   "scripts": {
     "assets": "node scripts/prepare-assets.mjs",
@@ -11,14 +11,10 @@
     "start": "node scripts/prepare-assets.mjs && node scripts/server.mjs",
     "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.js",
+    "test:scene": "node scripts/test-scene.mjs",
+    "test:smoke": "node scripts/prepare-assets.mjs && node scripts/test-browser-smoke.mjs",
     "test:browser": "playwright test"
   },
-  "dependencies": {
-    "babylonjs": "7.54.3",
-    "babylonjs-loaders": "7.54.3"
-  },
-  "devDependencies": {
-    "@playwright/test": "1.56.1",
-    "three": "0.180.0"
-  }
+  "dependencies": { "babylonjs": "7.54.3", "babylonjs-loaders": "7.54.3" },
+  "devDependencies": { "@playwright/test": "1.56.1", "three": "0.180.0" }
 }

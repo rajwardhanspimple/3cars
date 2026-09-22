@@ -1,4 +1,5 @@
-const KEY='3cars.records';
+const KEY='3cars.records.arcade-v1';
+const LEGACY_KEY='3cars.records';
 const DEFAULTS={carId:'vortex',weather:'dry',muted:false,quality:'high'};
 const cars=['vortex','apex','titan'],weather=['dry','wet'];
 const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
@@ -21,6 +22,10 @@ export class LocalRecords {
  read(){
   const empty={version:1,settings:{...DEFAULTS},results:[],bests:{}};if(!this._available)return empty;
   let text;try{text=this._storage.getItem(KEY);}catch{this._available=false;return empty;}
+  if(text===null){
+   try{const legacyText=this._storage.getItem(LEGACY_KEY);if(legacyText!==null){const legacyData=JSON.parse(legacyText);if(object(legacyData)&&legacyData.version===1)empty.settings=cleanSettings(legacyData.settings);}}catch{}
+   return empty;
+  }
   let data;try{data=JSON.parse(text);}catch{return empty;}if(!object(data)||data.version!==1)return empty;
   empty.settings=cleanSettings(data.settings);empty.results=Array.isArray(data.results)?data.results.map(cleanRace).filter(Boolean).slice(0,20):[];
   for(const c of cars)for(const w of weather){const k=`${c}:${w}`,n=data.bests?.[k];if(finite(n)&&n>0)empty.bests[k]=n;}

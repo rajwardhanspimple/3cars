@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './fixtures.js';
 test('startup creates a rendered full-resolution Mustang scene',async({page})=>{
  const messages=[];page.on('console',m=>{if(m.type()==='error')messages.push(m.text());});page.on('pageerror',e=>messages.push(e.message));await page.goto('/');
  await page.waitForFunction(()=>!document.querySelector('#start').disabled||!document.querySelector('#error').hidden,{},{timeout:120000});

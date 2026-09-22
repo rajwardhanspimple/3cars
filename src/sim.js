@@ -240,18 +240,20 @@ export class Race {
       const frontSlip=Math.atan2(v+a*car.yawRate,denominator)-wheel*direction;
       const rearSlip=Math.atan2(v-b*car.yawRate,denominator);
       const bodySlip=Math.abs(Math.atan2(v,Math.max(speed,1)));
-      // Locking the rear gives immediate breakaway. The arcade grip assist
-      // progressively restores rear force as slip grows, providing a restoring
-      // axle moment rather than an authored angle or a heading/velocity clamp.
-      const rearRecovery=ramp(.25,.80,Math.abs(rearSlip));
-      const rearGrip=car.handbrake?.04+.96*rearRecovery:1;
-      // A tire well beyond its peak slip slides at lower kinetic friction.
-      // This also avoids the old full-front-force scrub during a held slide.
-      // Counter-steering reduces front slip and restores full front bite.
-      const frontGrip=car.handbrake?1-.5*ramp(.50,.90,Math.abs(frontSlip)):1;
+      // Rear lock gives breakaway; progressive rear force then supplies a
+      // restoring axle moment. No authored angle or heading/velocity clamp.
+      const rearRecovery=ramp(.30,.85,Math.abs(rearSlip));
+      const rearGrip=car.handbrake?.02+.98*rearRecovery:1;
+      // Loaded front tires retain their bite unless both handbrake and real
+      // body sideslip are present. Counter-steer restores front tire adhesion.
+      const sliding=car.handbrake?ramp(.18,.35,bodySlip):0;
+      const frontGrip=1-.60*sliding*ramp(.50,.90,Math.abs(frontSlip));
       const frontLimit=mu*9.81*.52*frontGrip,rearLimit=mu*9.81*.48*rearGrip;
+      // High-speed rear cornering stiffness resists transient oversteer without
+      // reducing front steering authority or increasing the friction ceiling.
+      const fastGrip=car.handbrake?0:ramp(40,60,speed);
       const front=-clamp(mu*65*.52*frontSlip,-frontLimit,frontLimit);
-      const rear=-clamp(mu*70*.48*rearSlip,-rearLimit,rearLimit);
+      const rear=-clamp(mu*70*(1+.45*fastGrip)*.48*rearSlip,-rearLimit,rearLimit);
       const frontLateral=front*Math.cos(wheel);
       car.frontSlipAngle=frontSlip;car.rearSlipAngle=rearSlip;
       const drive=car.model.acceleration*car.throttle*(1-car.damage.engine*.55)/(1+speed*.018);
@@ -261,13 +263,13 @@ export class Race {
       const top=normalTop*(car.boostActive?ARCADE.nitroTopSpeed:1);
       let motor=car.reversing?-Math.min(car.brake*6,traction*.9):Math.min(drive,traction*.90)+(car.boostActive?ARCADE.nitroAccel:0);
       if((u>=top&&motor>0)||(u<=-11&&motor<0))motor=0;
-      const resist=.32+speed*speed*.00065+(off?speed*.38:0)+(car.handbrake?.35:0)+(car.reversing?0:Math.min(braking,traction*.95));
+      const resist=.32+speed*speed*.00065+(off?speed*.38:0)+(car.handbrake?.15:0)+(car.reversing?0:Math.min(braking,traction*.95));
       // Resistive forces cannot reverse motion. Brake-to-reverse uses motor torque.
       const drag=Math.sign(u)*Math.min(resist,speed/h);
       const ax=motor-drag-front*Math.sin(wheel),ay=frontLateral+rear;
-      // Extra damping dissipates rotation only once real slip develops.
-      // The normal gripped-corner response below ~7 degrees is unchanged.
-      const yawDamping=car.handbrake?.8+2*ramp(.18,.65,bodySlip):1.6+3*ramp(.12,.50,bodySlip);
+      // Lower initial handbrake damping quickens onset. At large slip the
+      // previous 2.8/s damping ceiling remains, while release recovery is intact.
+      const yawDamping=car.handbrake?.35+2.45*ramp(.18,.65,bodySlip):1.6+1.8*fastGrip+3*ramp(.12,.50,bodySlip);
       const yawAccel=(a*frontLateral-b*rear)/inertiaPerMass(car)-car.yawRate*yawDamping;
       car.yawRate+=yawAccel*h;
       u+=ax*h;v+=ay*h;

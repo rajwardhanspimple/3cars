@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { LocalRecords } from '../src/storage.js';
-const KEY='3cars.records.sakura-v1';
+const KEY='3cars.records.mountain-preview-v1';
+const SAKURA_KEY='3cars.records.sakura-v1';
 const ARCADE_KEY='3cars.records.arcade-v1';
 const LEGACY_KEY='3cars.records';
 const DEFAULTS={carId:'vortex',weather:'dry',muted:false,quality:'high'};
+const SAKURA_SETTINGS={carId:'vortex',weather:'wet',muted:true,quality:'high'};
 const ARCADE_SETTINGS={carId:'apex',weather:'wet',muted:true,quality:'medium'};
 const LEGACY_SETTINGS={carId:'titan',weather:'dry',muted:false,quality:'high'};
 class Memory {
@@ -14,10 +16,11 @@ class Memory {
  removeItem(k){this.map.delete(k);}
 }
 const entry={carId:'vortex',weather:'dry',position:1,time:310,penalty:0,bestLap:60,finishedAt:'2026-09-21T10:00:00Z'};
+const sakuraRecord=JSON.stringify({version:1,settings:SAKURA_SETTINGS,results:[entry],bests:{'vortex:dry':60}});
 const arcadeRecord=JSON.stringify({version:1,settings:ARCADE_SETTINGS,results:[entry],bests:{'vortex:dry':60}});
 const legacyRecord=JSON.stringify({version:1,settings:LEGACY_SETTINGS,results:[{...entry,weather:'wet'}],bests:{'apex:wet':55}});
 
-test('sakura settings round-trip through a new instance',()=>{
+test('mountain preview settings round-trip through a new instance',()=>{
  const s=new Memory(),r=new LocalRecords(s);
  assert.equal(r.available,true);
  assert.deepEqual(r.loadSettings(),DEFAULTS);
@@ -38,17 +41,38 @@ test('invalid settings, blocked storage, and later read failure are safe',()=>{
  assert.equal(new LocalRecords(blocked).available,false);
 });
 
-test('invalid sakura records fall back safely without importing arcade or legacy data',()=>{
- const migrated=JSON.stringify({version:1,settings:ARCADE_SETTINGS,results:[entry],bests:{'vortex:dry':60}});
- for(const value of ['{broken',JSON.stringify({version:2,settings:ARCADE_SETTINGS,results:[entry],bests:{'vortex:dry':60}})]){
-  const r=new LocalRecords(new Memory({[KEY]:value,[ARCADE_KEY]:migrated,[LEGACY_KEY]:legacyRecord}));
+
+test('invalid mountain preview records fall back safely without importing older route data',()=>{
+ const migrated=JSON.stringify({version:1,settings:SAKURA_SETTINGS,results:[entry],bests:{'vortex:dry':60}});
+ for(const value of ['{broken',JSON.stringify({version:2,settings:SAKURA_SETTINGS,results:[entry],bests:{'vortex:dry':60}})]){
+  const r=new LocalRecords(new Memory({[KEY]:value,[SAKURA_KEY]:migrated,[ARCADE_KEY]:arcadeRecord,[LEGACY_KEY]:legacyRecord}));
   assert.equal(r.results().length,0);
   assert.equal(r.bestLap('vortex','dry'),null);
   assert.deepEqual(r.loadSettings(),DEFAULTS);
  }
 });
 
-test('arcade settings migrate into sakura while race history stays separate',()=>{
+test('sakura settings migrate first while results stay separate',()=>{
+ const s=new Memory({[SAKURA_KEY]:sakuraRecord,[ARCADE_KEY]:arcadeRecord,[LEGACY_KEY]:legacyRecord});
+ const r=new LocalRecords(s);
+ assert.deepEqual(r.loadSettings(),SAKURA_SETTINGS);
+ assert.equal(r.results().length,0);
+ assert.equal(r.bestLap('vortex','dry'),null);
+ assert.equal(s.getItem(KEY),null);
+ assert.equal(s.getItem(SAKURA_KEY),sakuraRecord);
+ assert.equal(s.getItem(ARCADE_KEY),arcadeRecord);
+ assert.equal(s.getItem(LEGACY_KEY),legacyRecord);
+ assert.equal(r.recordRace(entry),true);
+ const stored=JSON.parse(s.getItem(KEY));
+ assert.deepEqual(stored.settings,SAKURA_SETTINGS);
+ assert.equal(stored.results.length,1);
+ assert.equal(stored.bests['vortex:dry'],60);
+ assert.equal(s.getItem(SAKURA_KEY),sakuraRecord);
+ assert.equal(s.getItem(ARCADE_KEY),arcadeRecord);
+ assert.equal(s.getItem(LEGACY_KEY),legacyRecord);
+});
+
+test('arcade settings migrate when sakura key is missing',()=>{
  const s=new Memory({[ARCADE_KEY]:arcadeRecord,[LEGACY_KEY]:legacyRecord});
  const r=new LocalRecords(s);
  assert.deepEqual(r.loadSettings(),ARCADE_SETTINGS);
@@ -57,16 +81,9 @@ test('arcade settings migrate into sakura while race history stays separate',()=
  assert.equal(s.getItem(KEY),null);
  assert.equal(s.getItem(ARCADE_KEY),arcadeRecord);
  assert.equal(s.getItem(LEGACY_KEY),legacyRecord);
- assert.equal(r.recordRace(entry),true);
- const stored=JSON.parse(s.getItem(KEY));
- assert.deepEqual(stored.settings,ARCADE_SETTINGS);
- assert.equal(stored.results.length,1);
- assert.equal(stored.bests['vortex:dry'],60);
- assert.equal(s.getItem(ARCADE_KEY),arcadeRecord);
- assert.equal(s.getItem(LEGACY_KEY),legacyRecord);
 });
 
-test('legacy settings migrate only when arcade key is missing',()=>{
+test('legacy settings migrate only when sakura and arcade keys are missing',()=>{
  const s=new Memory({[LEGACY_KEY]:legacyRecord});
  const r=new LocalRecords(s);
  assert.deepEqual(r.loadSettings(),LEGACY_SETTINGS);
@@ -76,7 +93,16 @@ test('legacy settings migrate only when arcade key is missing',()=>{
  assert.equal(s.getItem(LEGACY_KEY),legacyRecord);
 });
 
-test('malformed arcade key blocks fallback to older legacy settings',()=>{
+test('malformed sakura key blocks fallback to arcade and legacy settings',()=>{
+ for(const value of ['{broken',JSON.stringify({version:2,settings:SAKURA_SETTINGS})]){
+  const r=new LocalRecords(new Memory({[SAKURA_KEY]:value,[ARCADE_KEY]:arcadeRecord,[LEGACY_KEY]:legacyRecord}));
+  assert.deepEqual(r.loadSettings(),DEFAULTS);
+  assert.equal(r.results().length,0);
+  assert.equal(r.bestLap('vortex','dry'),null);
+ }
+});
+
+test('malformed arcade key blocks fallback to older legacy settings when sakura is missing',()=>{
  for(const value of ['{broken',JSON.stringify({version:2,settings:ARCADE_SETTINGS})]){
   const r=new LocalRecords(new Memory({[ARCADE_KEY]:value,[LEGACY_KEY]:legacyRecord}));
   assert.deepEqual(r.loadSettings(),DEFAULTS);
@@ -85,9 +111,10 @@ test('malformed arcade key blocks fallback to older legacy settings',()=>{
  }
 });
 
-test('blocked arcade migration read leaves defaults and does not import legacy settings',()=>{
- const s=new Memory({[LEGACY_KEY]:legacyRecord});
- s.throwOnGet.add(ARCADE_KEY);
+
+test('blocked sakura migration read leaves defaults and does not import arcade or legacy settings',()=>{
+ const s=new Memory({[ARCADE_KEY]:arcadeRecord,[LEGACY_KEY]:legacyRecord});
+ s.throwOnGet.add(SAKURA_KEY);
  const r=new LocalRecords(s);
  assert.equal(r.available,true);
  assert.deepEqual(r.loadSettings(),DEFAULTS);

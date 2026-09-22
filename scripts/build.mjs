@@ -1,10 +1,11 @@
 import {cp,mkdir,rm} from 'node:fs/promises';
 import {prepareAssets} from './prepare-assets.mjs';
-await prepareAssets();
+import {prepareEnvironment} from './prepare-environment.mjs';
+await prepareAssets();await prepareEnvironment();
 await rm('dist',{recursive:true,force:true});await mkdir('dist/vendor/draco',{recursive:true});
 for(const file of ['index.html','styles.css','arcade.css','src','assets'])await cp(file,`dist/${file}`,{recursive:true});
 await cp('node_modules/babylonjs/babylon.js','dist/vendor/babylon.js');
 await cp('node_modules/babylonjs-loaders/babylonjs.loaders.min.js','dist/vendor/babylonjs.loaders.min.js');
 for(const file of ['draco_wasm_wrapper.js','draco_decoder.wasm','draco_decoder.js'])await cp(`node_modules/three/examples/jsm/libs/draco/gltf/${file}`,`dist/vendor/draco/${file}`);
 await cp('THIRD_PARTY_NOTICES.md','dist/THIRD_PARTY_NOTICES.md');
-console.log('Built dist/. Full-resolution model, worker simulation, and runtime assets are local.');
+console.log('Built mountain preview with verified local environment assets and full Mustang geometry.');

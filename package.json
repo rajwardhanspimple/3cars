@@ -1,20 +1,17 @@
 {
-  "name": "3cars",
-  "version": "0.2.0",
-  "private": true,
-  "type": "module",
-  "description": "Sakura Valley browser racing with three full-detail Mustangs and AI drifting",
-  "engines": { "node": ">=22" },
-  "scripts": {
-    "assets": "node scripts/prepare-assets.mjs",
-    "dev": "node scripts/prepare-assets.mjs && node scripts/server.mjs",
-    "start": "node scripts/prepare-assets.mjs && node scripts/server.mjs",
-    "build": "node scripts/build.mjs",
-    "test": "node --test test/*.test.js",
-    "test:scene": "node scripts/test-scene.mjs",
-    "test:smoke": "node scripts/prepare-assets.mjs && node scripts/test-browser-smoke.mjs",
-    "test:browser": "playwright test"
-  },
-  "dependencies": { "babylonjs": "7.54.3", "babylonjs-loaders": "7.54.3" },
-  "devDependencies": { "@playwright/test": "1.56.1", "three": "0.180.0" }
+ "name":"3cars","version":"0.3.0-preview","private":true,"type":"module",
+ "description":"Sakura Pass interactive mountain-road preview",
+ "engines":{"node":">=22"},
+ "scripts":{
+  "assets":"node scripts/prepare-assets.mjs && node scripts/prepare-environment.mjs",
+  "dev":"npm run assets && node scripts/server.mjs",
+  "start":"npm run dev",
+  "build":"node scripts/build.mjs",
+  "test":"node --test test/*.test.js",
+  "test:scene":"node scripts/test-scene.mjs",
+  "test:smoke":"npm run assets && node scripts/test-browser-smoke.mjs",
+  "test:browser":"playwright test"
+ },
+ "dependencies":{"babylonjs":"7.54.3","babylonjs-loaders":"7.54.3"},
+ "devDependencies":{"@playwright/test":"1.56.1","three":"0.180.0"}
 }

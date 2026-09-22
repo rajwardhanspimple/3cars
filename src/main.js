@@ -1,20 +1,23 @@
-import { Race, CARS, LAPS, clamp } from './sim.js';
-import { RaceView } from './mustang-view.js';
-import { LocalRecords } from './storage.js';
-import { RaceAudio } from './audio.js';
+import {Race,CARS,LAPS,clamp} from './sim.js';
+import {RaceView} from './mustang-view.js';
+import {LocalRecords} from './storage.js';
+import {RaceAudio} from './audio.js';
+import {SimulationClient} from './simulation-client.js';
 const $=id=>document.getElementById(id);
-const ids=['menu','hud','pause-panel','results','error','error-message','setup','start','weather','quality','mute','saved-best','history-count','race-history','storage-status','race-canvas','position','lap','race-time','standings','current-lap','best-lap','penalty','engine-condition','steering-condition','tires-condition','rpm','rpm-fill','gear','speed','abs','tc','conditions','notification','countdown','minimap','result-title','result-summary','result-list'];
+const ids=['menu','hud','pause-panel','results','error','error-message','setup','start','weather','quality','mute','saved-best','history-count','race-history','storage-status','race-canvas','position','lap','race-time','standings','current-lap','best-lap','penalty','engine-condition','steering-condition','tires-condition','rpm','rpm-fill','gear','speed','abs','tc','conditions','notification','countdown','minimap','result-title','result-summary','result-list','nitro-meter','nitro-value','nitro-status','drift-status'];
 const ui=Object.fromEntries(ids.map(id=>[id,$(id)]));
-const records=new LocalRecords(),audio=new RaceAudio();let settings=records.loadSettings(),race=new Race(settings),view,keys=new Set(),saved=false,accumulator=0,last=performance.now(),hudClock=0,previousPhase=null,frameId,loading=false,viewReady=false,loadToken=0,disposed=false,windowFocused=document.hasFocus(),loadLostFocus=false;
+const records=new LocalRecords(),audio=new RaceAudio(),keys=new Set();
+let settings=records.loadSettings(),race=new Race(settings),view,simulation,saved=false,loading=true,viewReady=false,loadToken=0,disposed=false,failed=false,pausePending=false,windowFocused=document.hasFocus(),loadLostFocus=false,last=performance.now(),previousPhase=null,frameId,lastSound=performance.now(),lastHUD=0;
 export const formatTime=seconds=>{if(seconds===null||!Number.isFinite(seconds))return 'None yet';const ms=Math.max(0,Math.floor(seconds*1000));return `${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}.${String(ms%1000).padStart(3,'0')}`;};
-function text(id,value){const node=ui[id];if(node.textContent!==String(value))node.textContent=String(value);}
-function selected(){return {carId:ui.setup.elements.carId.value,weather:ui.weather.value,quality:ui.quality.value,muted:settings.muted};}
+const text=(id,value)=>{const node=ui[id];if(node&&node.textContent!==String(value))node.textContent=String(value);};
+const selected=()=>({carId:ui.setup.elements.carId.value,weather:ui.weather.value,quality:ui.quality.value,muted:settings.muted});
+const pressed=(...codes)=>codes.some(code=>keys.has(code))?1:0;
+function inputState(){return loading||race.phase==='paused'?{}:{throttle:pressed('KeyW','ArrowUp'),brake:pressed('KeyS','ArrowDown'),steer:pressed('KeyD','ArrowRight')-pressed('KeyA','ArrowLeft'),handbrake:!!pressed('Space'),boost:!!pressed('ShiftLeft','ShiftRight')};}
+function sendInput(){simulation?.input(inputState());}
+function clearInput(){keys.clear();simulation?.input({});}
 function storageStatus(){text('storage-status',records.available?'Settings, best laps, and the last 20 races stay in this browser.':'Browser storage is unavailable. This session will not be saved.');}
 function persistSettings(){settings=selected();records.saveSettings(settings);storageStatus();}
-function setLoading(value,label='Loading car...'){loading=value;if(ui.setup)ui.setup.inert=value;ui.start.disabled=value;text('start',value?label:'Start five-lap race');document.body.dataset.loading=String(value);if(value){keys.clear();accumulator=0;}}
-function playerModelName(car){return car.index===0?`Ford Mustang 2015 (${car.model.name})`:car.model.name;}
-
-
+function setLoading(value,label='Loading car...'){loading=value;ui.setup.inert=value;ui.start.disabled=value;text('start',value?label:'Start five-lap race');document.body.dataset.loading=String(value);if(value)clearInput();}
 function renderHistory(){
  const rows=records.results();text('history-count',rows.length);ui['race-history'].replaceChildren();
  for(const row of rows){const li=document.createElement('li'),small=document.createElement('small');li.textContent=`P${row.position} / ${CARS.find(c=>c.id===row.carId)?.name} / ${formatTime(row.time+row.penalty)}`;small.textContent=`${new Date(row.finishedAt).toLocaleString()} / ${row.weather==='wet'?'Rain':'Dry'} / +${row.penalty}s`;li.append(small);ui['race-history'].append(li);}
@@ -22,90 +25,86 @@ function renderHistory(){
  const best=records.bestLap(settings.carId,settings.weather);text('saved-best',best===null?'No lap recorded':formatTime(best));storageStatus();
 }
 function applyMute(){audio.setMuted(settings.muted);text('mute',settings.muted?'Sound off':'Sound on');ui.mute.setAttribute('aria-pressed',String(settings.muted));}
-async function initView(){
- const token=++loadToken;viewReady=false;loadLostFocus=false;setLoading(true,'Loading track...');
- try{
-  view=new RaceView(ui['race-canvas'],race,settings);await Promise.resolve(view.ready);
-  if(token!==loadToken||disposed)return;viewReady=true;last=performance.now();setLoading(false);syncPhase();updateHUD();
- }catch(error){if(token===loadToken&&!disposed)loadError(error);}
+function applySnapshot(state){
+ if(disposed||failed)return;
+ for(const key of ['phase','time','countdown','firstFinish','pausedPhase'])race[key]=state[key];
+ for(let i=0;i<race.cars.length;i++)Object.assign(race.cars[i],state.cars[i]);
+ race.player=race.cars[0];
+ if(view?.scene)view.scene.metadata={...view.scene.metadata,simulation:{phase:race.phase,time:race.time,steer:race.player.steer,nitro:race.player.nitro,boostActive:race.player.boostActive,drifting:race.player.drifting}};
+ if(!loading){syncPhase();const now=performance.now();if(now-lastHUD>=66||race.phase==='paused'){updateHUD();lastHUD=now;}}
 }
-
 async function resetRace(start=false,focusTarget=null){
- const token=++loadToken;keys.clear();accumulator=0;saved=false;viewReady=false;loadLostFocus=false;setLoading(true,start?'Loading car...':'Updating car...');ui.error.hidden=true;race=new Race(selected());
+ if(disposed||failed||loading&&view)return;
+ const token=++loadToken;saved=false;viewReady=false;loadLostFocus=false;setLoading(true,start?'Getting ready...':'Loading full-detail Mustang...');ui.error.hidden=true;
+ const config=selected();race=new Race(config);
  try{
-  if(view&&view.quality!==ui.quality.value){view.dispose();view=new RaceView(ui['race-canvas'],race,{quality:ui.quality.value});await Promise.resolve(view.ready);}else if(view)await view.setRace(race);else{view=new RaceView(ui['race-canvas'],race,{quality:ui.quality.value});await Promise.resolve(view.ready);}
-  if(token!==loadToken||disposed)return;viewReady=true;last=performance.now();previousPhase=null;
-  if(start){race.start();if(document.hidden||!windowFocused||loadLostFocus)race.pause();}
-  setLoading(false);syncPhase();updateHUD();
+  const physicsReady=simulation.reset(config);
+  if(!view||view.quality!==config.quality){view?.dispose();view=new RaceView(ui['race-canvas'],race,config);await Promise.all([view.ready,physicsReady]);}
+  else await Promise.all([view.setRace(race),physicsReady]);
+  if(token!==loadToken||disposed||failed)return;
+  viewReady=true;last=performance.now();
+  if(start){await simulation.command('start');if(document.hidden||!windowFocused||loadLostFocus)await simulation.command('pause');}
+  if(token!==loadToken||disposed||failed)return;
+  setLoading(false);previousPhase=null;syncPhase();updateHUD();sendInput();
   if(start&&race.phase!=='paused')ui['race-canvas'].focus();else if(!start&&focusTarget instanceof HTMLElement&&focusTarget.isConnected)focusTarget.focus();else if(!start)ui.start.focus();
- }catch(error){if(token===loadToken&&!disposed)loadError(error);}
+ }catch(error){if(token===loadToken&&!disposed)fail(error);}
 }
 function syncPhase(){
  if(previousPhase===race.phase)return;previousPhase=race.phase;document.body.dataset.phase=race.phase;
  ui.menu.hidden=race.phase!=='menu';ui.hud.hidden=race.phase==='menu';ui['pause-panel'].hidden=race.phase!=='paused';ui.results.hidden=race.phase!=='finished';
- ui['race-canvas'].inert=loading||['paused','finished'].includes(race.phase);ui.hud.inert=loading||['paused','finished'].includes(race.phase);
- if(race.phase==='paused')$('resume').focus();if(race.phase==='finished'){finishRace();$('race-again').focus();}if(race.phase==='menu')renderHistory();
+ ui['race-canvas'].inert=['paused','finished'].includes(race.phase);ui.hud.inert=['paused','finished'].includes(race.phase);
+ if(race.phase==='paused')$('resume').focus();if(race.phase==='finished'){clearInput();finishRace();$('race-again').focus();}if(race.phase==='menu')renderHistory();
 }
-
-
 function finishRace(){
  const order=race.standings(),p=race.player,position=order.indexOf(p)+1;
  text('result-title',position===1?'You take the win.':'Race complete');text('result-summary',`P${position} of 3. ${LAPS} laps at Meridian in ${formatTime(p.finishTime+p.penalty)}.`);ui['result-list'].replaceChildren();
- for(const [i,c] of order.entries()){const li=document.createElement('li'),name=document.createElement('span'),right=document.createElement('span'),detail=document.createElement('small');name.textContent=`${i+1}. ${c.name}`;right.textContent=formatTime(c.finishTime+c.penalty);detail.textContent=`${playerModelName(c)} / penalties +${c.penalty}s`;name.append(detail);li.append(name,right);ui['result-list'].append(li);}
+ for(const [i,c]of order.entries()){const li=document.createElement('li'),name=document.createElement('span'),right=document.createElement('span'),detail=document.createElement('small');name.textContent=`${i+1}. ${c.name}`;right.textContent=formatTime(c.finishTime+c.penalty);detail.textContent=`${c.index===0?'Ford Mustang 2015 / ':''}${c.model.name} / penalties +${c.penalty}s`;name.append(detail);li.append(name,right);ui['result-list'].append(li);}
  if(!saved){saved=true;records.recordRace({carId:p.model.id,weather:race.weather,position,time:p.finishTime,penalty:p.penalty,bestLap:p.bestLap,finishedAt:new Date().toISOString()});renderHistory();}
 }
-
-
 function updateHUD(){
  const p=race.player,order=race.standings();ui.position.innerHTML=`${order.indexOf(p)+1} <small>/ 3</small>`;ui.lap.innerHTML=`${p.lap} <small>/ ${LAPS}</small>`;
  text('race-time',formatTime(p.finished?p.finishTime:race.time));text('current-lap',p.finished?'Finished':p.lapStart===null?'Ready':formatTime(race.time-p.lapStart));text('best-lap',formatTime(p.bestLap));text('penalty',`+${p.penalty.toFixed(1)}s`);
  text('speed',Math.round(p.speed*3.6));text('gear',p.gear);text('rpm',`${Math.round(p.rpm)} RPM`);ui['rpm-fill'].style.width=`${clamp(p.rpm/8500,0,1)*100}%`;
  for(const part of ['engine','steering','tires']){ui[`${part}-condition`].value=1-p.damage[part];ui[`${part}-condition`].title=`${Math.round((1-p.damage[part])*100)}% condition`;}
  ui.abs.classList.toggle('active',p.abs);ui.tc.classList.toggle('active',p.tc);text('conditions',race.weather==='wet'?'Wet track':'Dry track');
+ text('nitro-value',`${Math.round(p.nitro??100)}%`);if(ui['nitro-meter'])ui['nitro-meter'].value=p.nitro??100;
+ text('nitro-status',p.boostActive?'Boosting':p.nitroCooldown>0?`Cooling ${p.nitroCooldown.toFixed(1)}s`:p.nitro>=99.9?'Shift to boost':pressed('ShiftLeft','ShiftRight')?'Release Shift to recharge':'Recharging');
+ text('drift-status',p.drifting?'Drifting. Release Space to grip.':'Space: handbrake');document.body.dataset.boost=String(!!p.boostActive);document.body.dataset.drifting=String(!!p.drifting);
  text('notification',p.finished&&race.phase==='racing'?'Finished. Waiting for the other drivers.':p.noticeUntil>race.time?p.notification:'');ui.countdown.hidden=race.phase!=='countdown';if(race.phase==='countdown')text('countdown',Math.max(1,Math.ceil(race.countdown)));
  ui.standings.replaceChildren();for(const[i,c]of order.entries()){const li=document.createElement('li');if(c.index===0)li.className='you';const pos=document.createElement('span'),name=document.createElement('span'),gap=document.createElement('span');pos.textContent=i+1;name.textContent=c.name;gap.textContent=c.finished?formatTime(c.finishTime+c.penalty):i===0?'Leader':`~+${((order[0].progress-c.progress)/Math.max(10,c.speed)).toFixed(1)}s`;li.append(pos,name,gap);ui.standings.append(li);}drawMap();
 }
 const map=ui.minimap.getContext('2d');
-
-
 function drawMap(){
- if(!map)return;const t=race.track,project=p=>[120+p.x*.55,100+p.z*.55];map.clearRect(0,0,240,195);map.lineJoin='round';map.lineCap='round';map.beginPath();t.points.forEach((p,i)=>{const[x,y]=project(p);if(i)map.lineTo(x,y);else map.moveTo(x,y);});map.closePath();map.strokeStyle='#b3c7d2';map.lineWidth=7;map.stroke();map.strokeStyle='#ffffff';map.lineWidth=2;map.stroke();
+ if(!map)return;const t=race.track,project=p=>[120+p.x*.55,100+p.z*.55];map.clearRect(0,0,240,195);map.lineJoin='round';map.lineCap='round';map.beginPath();t.points.forEach((p,i)=>{const[x,y]=project(p);if(i)map.lineTo(x,y);else map.moveTo(x,y);});map.closePath();map.strokeStyle='#b3c7d2';map.lineWidth=7;map.stroke();map.strokeStyle='#fff';map.lineWidth=2;map.stroke();
  const start=project(t.at(0));map.fillStyle='#173c56';map.fillRect(start[0]-3,start[1]-4,6,8);for(const c of [...race.cars].reverse()){const[x,y]=project(c);map.beginPath();map.arc(x,y,c.index===0?5:4,0,Math.PI*2);map.fillStyle=c.model.color;map.fill();map.strokeStyle=c.index===0?'#173c56':'#fff';map.lineWidth=2;map.stroke();}map.fillStyle='#173c56';map.font='11px Segoe UI, Arial';map.fillText('Meridian circuit',12,182);
 }
-function togglePause(){if(loading)return;keys.clear();race.pause();accumulator=0;last=performance.now();updateHUD();syncPhase();audio.update({phase:race.phase});if(race.phase!=='paused')ui['race-canvas'].focus();}
-function fail(error){console.error(error);cancelAnimationFrame(frameId);setLoading(false);ui.start.disabled=true;audio.setMuted(true);ui.menu.hidden=true;ui.hud.hidden=true;ui.error.hidden=false;text('error-message',error.message||'Unable to render the circuit. Reload or try a different browser.');document.body.dataset.phase='error';}
-function loadError(error){console.error(error);keys.clear();accumulator=0;viewReady=false;setLoading(false);ui.start.disabled=true;audio.setMuted(true);ui.menu.hidden=true;ui.hud.hidden=true;ui['pause-panel'].hidden=true;ui.results.hidden=true;ui.error.hidden=false;text('error-message',error.message||'Unable to load the car model. Reload the game to try again.');document.body.dataset.phase='error';}
+async function togglePause(){
+ if(loading||pausePending||failed)return;pausePending=true;clearInput();
+ try{await simulation.command(race.phase==='paused'?'resume':'pause');updateHUD();syncPhase();if(race.phase!=='paused')ui['race-canvas'].focus();}
+ catch(error){if(!disposed)fail(error);}finally{pausePending=false;}
+}
+function fail(error){if(disposed||failed)return;failed=true;console.error(error);clearInput();simulation?.dispose();cancelAnimationFrame(frameId);setLoading(false);viewReady=false;ui.start.disabled=true;audio.setMuted(true);ui.menu.hidden=true;ui.hud.hidden=true;ui['pause-panel'].hidden=true;ui.results.hidden=true;ui.error.hidden=false;text('error-message',error.message||'Unable to run the game. Reload to try again.');document.body.dataset.phase='error';}
 ui.setup.elements.carId.value=settings.carId;ui.weather.value=settings.weather;ui.quality.value=settings.quality;applyMute();
-ui.start.disabled=true;text('start','Loading track...');syncPhase();renderHistory();initView();
-ui.setup.addEventListener('change',async()=>{if(loading)return;const active=document.activeElement;persistSettings();await resetRace(false,active);});
-ui.setup.addEventListener('submit',event=>{event.preventDefault();if(loading)return;audio.unlock();persistSettings();resetRace(true);});ui.menu.addEventListener('pointerdown',()=>audio.unlock(),{once:true});
-
+try{simulation=new SimulationClient(applySnapshot,fail);document.body.dataset.worker='ready';}catch(error){fail(error);}
+if(!failed){syncPhase();renderHistory();resetRace();}
+ui.setup.addEventListener('change',()=>{if(loading||failed)return;const active=document.activeElement;persistSettings();resetRace(false,active);});
+ui.setup.addEventListener('submit',event=>{event.preventDefault();if(loading||failed)return;audio.unlock();persistSettings();resetRace(true);});ui.menu.addEventListener('pointerdown',()=>audio.unlock(),{once:true});
 ui.mute.addEventListener('click',()=>{audio.unlock();settings.muted=!settings.muted;records.saveSettings({muted:settings.muted});applyMute();});
-$('pause').addEventListener('click',togglePause);$('resume').addEventListener('click',togglePause);$('restart').addEventListener('click',()=>{audio.unlock();if(!loading)resetRace(true);});
-$('race-again').addEventListener('click',()=>{audio.unlock();if(!loading)resetRace(true);});$('exit').addEventListener('click',()=>{if(!loading)resetRace();});$('result-setup').addEventListener('click',()=>{if(!loading)resetRace();});
-const drivingKeys=new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space']);
+$('pause').addEventListener('click',togglePause);$('resume').addEventListener('click',togglePause);$('restart').addEventListener('click',()=>{audio.unlock();if(!loading)resetRace(true);});$('race-again').addEventListener('click',()=>{audio.unlock();if(!loading)resetRace(true);});$('exit').addEventListener('click',()=>{if(!loading)resetRace();});$('result-setup').addEventListener('click',()=>{if(!loading)resetRace();});
+const drivingKeys=new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','ShiftLeft','ShiftRight']);
 window.addEventListener('keydown',event=>{
  const target=event.target;if(event.ctrlKey||event.metaKey||event.altKey||(target instanceof Element&&target.closest('select,input,textarea,summary,[contenteditable=""],[contenteditable="true"]')))return;
- if(event.code==='KeyM'&&!event.repeat){ui.mute.click();return;}if(loading)return;if(race.phase==='menu'||race.phase==='finished')return;
+ if(event.code==='KeyM'&&!event.repeat){ui.mute.click();return;}if(loading||failed||race.phase==='menu'||race.phase==='finished')return;
  if(['KeyP','Escape'].includes(event.code)&&!event.repeat){event.preventDefault();togglePause();return;}if(target instanceof Element&&target.closest('button,a'))return;
- if(drivingKeys.has(event.code)){event.preventDefault();if(race.phase!=='paused')keys.add(event.code);}if(event.code==='KeyR'&&!event.repeat&&race.phase==='racing'){event.preventDefault();race.repair();updateHUD();}
+ if(drivingKeys.has(event.code)){event.preventDefault();if(race.phase!=='paused'){keys.add(event.code);sendInput();}}
+ if(event.code==='KeyR'&&!event.repeat&&race.phase==='racing'){event.preventDefault();clearInput();simulation.command('repair').catch(fail);}
 });
-window.addEventListener('keyup',e=>keys.delete(e.code));
-function autoPause(){keys.clear();accumulator=0;if(loading){loadLostFocus=true;audio.update({phase:'paused'});return;}if(['countdown','racing'].includes(race.phase)){race.pause();updateHUD();syncPhase();}audio.update({phase:'paused'});}
-window.addEventListener('focus',()=>{windowFocused=true;last=performance.now();accumulator=0;});
-window.addEventListener('blur',()=>{windowFocused=false;autoPause();});document.addEventListener('visibilitychange',()=>{if(document.hidden)autoPause();last=performance.now();accumulator=0;});
+window.addEventListener('keyup',event=>{if(keys.delete(event.code))sendInput();});
+function autoPause(){clearInput();if(loading){loadLostFocus=true;return;}if(!failed&&['countdown','racing'].includes(race.phase))simulation.command('pause').catch(error=>{if(!disposed)fail(error);});audio.update({phase:'paused',boostActive:false,drifting:false});}
+window.addEventListener('focus',()=>{windowFocused=true;last=performance.now();});window.addEventListener('blur',()=>{windowFocused=false;autoPause();});document.addEventListener('visibilitychange',()=>{if(document.hidden)autoPause();last=performance.now();});
 ui['race-canvas'].addEventListener('webglcontextlost',event=>{event.preventDefault();autoPause();fail(new Error('Graphics context was lost. Reload the game to continue.'));});
-
-document.addEventListener('keydown',event=>{if(event.key!=='Tab')return;const modal=[ui['pause-panel'],ui.results,ui.error].find(n=>!n.hidden);if(!modal)return;const buttons=[...modal.querySelectorAll('button')],first=buttons[0],last=buttons.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}});
-const pressed=(...codes)=>codes.some(k=>keys.has(k))?1:0;
-
-function frame(now){
- try{
-  const elapsed=Math.min(.1,Math.max(0,(now-last)/1000));last=now;
-  if(!document.hidden){const p=race.player;if(loading||!viewReady){accumulator=0;audio.update({phase:'paused',rpm:p.rpm,speed:p.speed,throttle:p.throttle,wet:race.weather==='wet',slip:p.slip,impact:p.impact,gear:p.gear},elapsed);hudClock+=elapsed;if(hudClock>.1){updateHUD();hudClock=0;}}
-  else{accumulator+=elapsed;const input={throttle:pressed('KeyW','ArrowUp'),brake:pressed('KeyS','ArrowDown','Space'),steer:pressed('KeyD','ArrowRight')-pressed('KeyA','ArrowLeft')};while(accumulator>=1/120){race.step(1/120,input);accumulator-=1/120;}syncPhase();audio.update({phase:race.phase,rpm:p.rpm,speed:p.speed,throttle:p.throttle,wet:race.weather==='wet',slip:p.slip,impact:p.impact,gear:p.gear},elapsed);hudClock+=elapsed;if(hudClock>.1){updateHUD();hudClock=0;}view?.render(race.phase==='paused'?0:elapsed);}}
-  frameId=requestAnimationFrame(frame);
- }catch(error){fail(error);}
-}
+document.addEventListener('keydown',event=>{if(event.key!=='Tab')return;const modal=[ui['pause-panel'],ui.results,ui.error].find(n=>!n.hidden);if(!modal)return;const buttons=[...modal.querySelectorAll('button')],first=buttons[0],lastButton=buttons.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();lastButton.focus();}else if(!event.shiftKey&&document.activeElement===lastButton){event.preventDefault();first.focus();}});
+const soundTimer=setInterval(()=>{if(disposed||failed)return;const now=performance.now(),p=race.player;audio.update({phase:loading||document.hidden?'paused':race.phase,rpm:p.rpm,speed:p.speed,throttle:p.throttle,wet:race.weather==='wet',slip:p.slip,impact:p.impact,gear:p.gear,boostActive:p.boostActive,drifting:p.drifting},Math.min(.1,(now-lastSound)/1000));lastSound=now;},33);
+function frame(now){if(disposed||failed)return;try{const dt=Math.min(.1,Math.max(0,(now-last)/1000));last=now;if(!document.hidden&&!loading&&viewReady)view.render(race.phase==='paused'?0:dt);frameId=requestAnimationFrame(frame);}catch(error){fail(error);}}
 frameId=requestAnimationFrame(frame);
-window.addEventListener('pagehide',()=>{disposed=true;++loadToken;cancelAnimationFrame(frameId);audio.dispose();view?.dispose();},{once:true});
+window.addEventListener('pagehide',()=>{disposed=true;++loadToken;clearInterval(soundTimer);cancelAnimationFrame(frameId);simulation?.dispose();audio.dispose();view?.dispose();},{once:true});

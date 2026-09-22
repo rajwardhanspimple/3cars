@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('../', import.meta.url)));
 const assetPath = resolve(root, 'assets/mustang-2015.gltf');
@@ -11,7 +11,8 @@ const expectedBytes = 4562323;
 const expectedTriangles = 1493119;
 const expectedExtras = {
   title: 'Ford Mustang 2015 EDITION',
-  author: 'WARENTERTAINMENT (https://sketchfab.com/WarEntertainment)',
+  authorPrefix: 'WARENTERTAINMENT',
+  authorProfileUrl: 'https://sketchfab.com/WarEntertainment',
   license: 'CC-BY-4.0'
 };
 
@@ -30,6 +31,16 @@ function includesValue(source, expected) {
   return normalizeWhitespace(source).includes(expected);
 }
 
+function validateAuthor(author) {
+  const normalizedAuthor = normalizeWhitespace(author);
+  if (!normalizedAuthor.startsWith(expectedExtras.authorPrefix)) {
+    throw new Error(`Asset author mismatch. Expected author to start with ${expectedExtras.authorPrefix}.`);
+  }
+  if (!normalizedAuthor.includes(expectedExtras.authorProfileUrl)) {
+    throw new Error(`Asset author mismatch. Expected author profile URL ${expectedExtras.authorProfileUrl}.`);
+  }
+}
+
 function validateMetadata(gltf) {
   const extras = gltf?.asset?.extras ?? {};
   const extrasText = JSON.stringify(extras);
@@ -38,7 +49,7 @@ function validateMetadata(gltf) {
   const license = extras.license ?? extras.licenseType ?? extrasText;
 
   if (!includesValue(title, expectedExtras.title)) throw new Error(`Asset title mismatch. Expected ${expectedExtras.title}.`);
-  if (!includesValue(author, expectedExtras.author)) throw new Error(`Asset author mismatch. Expected ${expectedExtras.author}.`);
+  validateAuthor(author);
   if (!includesValue(license, expectedExtras.license)) throw new Error(`Asset license mismatch. Expected ${expectedExtras.license}.`);
 }
 
@@ -95,7 +106,8 @@ async function readCachedAsset() {
     return validateAsset(await readFile(assetPath));
   } catch (error) {
     if (error?.code === 'ENOENT') return null;
-    throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Cached asset at ${assetPath} is invalid. Delete it and rerun npm run assets to download the pinned source again. ${message}`, { cause: error });
   }
 }
 
@@ -142,7 +154,9 @@ export async function prepareAssets() {
   }
 }
 
-if (import.meta.url === new URL(process.argv[1], 'file:').href) {
+const isDirectRun = process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
+
+if (isDirectRun) {
   prepareAssets()
     .then((result) => {
       console.log(`Prepared ${result.path}`);

@@ -50,6 +50,13 @@ test('handbrake opens a bounded assisted drift and recovers after release',()=>{
   assert.ok(Math.abs(c.driftAngle)<.03,`driftAngle ${c.driftAngle}`);
 });
 
+test('velocity scalar does not resurrect stale pre-collision speed',()=>{
+  const r=new Race();r.phase='racing';const c=place(r,30);const p=r.track.at(50);
+  c.speed=30;c.vx=Math.sin(p.heading)*8;c.vz=Math.cos(p.heading)*8;
+  r.drive(c,{throttle:0},1/120);
+  assert.ok(c.speed<9,`speed ${c.speed}`);
+});
+
 test('nitro boost is faster and allows the higher active speed cap',()=>{
   const boosted=new Race(),normal=new Race();boosted.phase='racing';normal.phase='racing';
   place(boosted,20);place(normal,20);
@@ -59,9 +66,14 @@ test('nitro boost is faster and allows the higher active speed cap',()=>{
   const capRace=new Race();capRace.phase='racing';const c=place(capRace,capRace.player.model.topSpeed*1.12);c.throttle=1;
   driveOnSameSurface(capRace,.05,{throttle:1,boost:true});
   assert.ok(c.speed>c.model.topSpeed,`speed ${c.speed}`);
-  const noBoost=new Race();noBoost.phase='racing';const n=place(noBoost,noBoost.player.model.topSpeed*1.12);n.throttle=1;
-  driveOnSameSurface(noBoost,.05,{throttle:1});
-  assert.ok(n.speed<=n.model.topSpeed,`speed ${n.speed}`);
+});
+
+test('released boost overspeed bleeds down without an instant normal cap cut',()=>{
+  const r=new Race();r.phase='racing';const c=place(r,r.player.model.topSpeed*1.15);c.throttle=1;
+  const start=c.speed;
+  driveOnSameSurface(r,.05,{throttle:1,boost:false});
+  assert.ok(c.speed>c.model.topSpeed,`speed ${c.speed}`);
+  assert.ok(c.speed<start,`${c.speed} < ${start}`);
 });
 
 test('nitro drains, depletes, waits for cooldown, and refills only after boost is released',()=>{
@@ -79,18 +91,30 @@ test('nitro drains, depletes, waits for cooldown, and refills only after boost i
   assert.equal(c.nitro,100);
 });
 
+test('nitro cooldown delays recharge but does not block re-use of remaining charge',()=>{
+  const r=new Race();r.phase='racing';const c=place(r,30);c.throttle=1;
+  driveOnSameSurface(r,.5,{throttle:1,boost:true});
+  const afterBurst=c.nitro;
+  driveOnSameSurface(r,1/60,{throttle:1,boost:false});
+  assert.ok(c.nitroCooldown>0);
+  driveOnSameSurface(r,.2,{throttle:1,boost:true});
+  assert.equal(c.boostActive,true);
+  assert.ok(c.nitro<afterBurst,`${c.nitro} < ${afterBurst}`);
+});
+
 test('boost is blocked while stationary, paused, countdown, non-racing, or finished',()=>{
   const stationary=new Race();stationary.phase='racing';place(stationary,0);stationary.player.throttle=1;driveOnSameSurface(stationary,.2,{throttle:1,boost:true});assert.equal(stationary.player.boostActive,false);assert.equal(stationary.player.nitro,100);
   const menu=new Race();place(menu,30);menu.player.throttle=1;driveOnSameSurface(menu,.2,{throttle:1,boost:true});assert.equal(menu.player.boostActive,false);assert.equal(menu.player.nitro,100);
   const countdown=new Race();countdown.start();countdown.step(1/120,{throttle:1,boost:true});assert.equal(countdown.player.boostActive,false);assert.equal(countdown.player.nitro,100);
-  const paused=new Race();paused.phase='racing';place(paused,30);paused.player.throttle=1;driveOnSameSurface(paused,.2,{throttle:1,boost:true});assert.equal(paused.player.boostActive,true);const nitro=paused.player.nitro;paused.pause();paused.step(1/120,{throttle:1,boost:true});assert.equal(paused.player.boostActive,false);assert.equal(paused.player.nitro,nitro);
+  const paused=new Race();paused.phase='racing';place(paused,30);paused.player.throttle=1;driveOnSameSurface(paused,.2,{throttle:1,boost:true});assert.equal(paused.player.boostActive,true);const nitro=paused.player.nitro;paused.pause();assert.equal(paused.player.nitroCooldown,ARCADE.nitroCooldown);paused.step(1,{throttle:1,boost:true});assert.equal(paused.player.boostActive,false);assert.equal(paused.player.nitro,nitro);assert.equal(paused.player.nitroCooldown,ARCADE.nitroCooldown);
   const finished=new Race();finished.phase='racing';finished.player.finished=true;finished.player.boostActive=true;finished.player.nitro=50;finished.step(1/120,{throttle:1,boost:true});assert.equal(finished.player.boostActive,false);assert.equal(finished.player.nitro,50);
 });
 
-test('repair stops boost and drift without replenishing nitro and restart creates a full charge',()=>{
+test('repair stops boost and drift, starts cooldown, and does not replenish nitro',()=>{
   const r=new Race();r.phase='racing';const c=place(r,25);c.nitro=37;c.boostActive=true;c.drifting=true;c.driftAngle=.4;c.handbrake=true;
   assert.equal(r.repair(),true);
   assert.equal(c.nitro,37);
+  assert.equal(c.nitroCooldown,ARCADE.nitroCooldown);
   assert.equal(c.boostActive,false);
   assert.equal(c.drifting,false);
   assert.equal(c.driftAngle,0);

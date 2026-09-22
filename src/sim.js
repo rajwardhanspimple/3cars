@@ -84,9 +84,12 @@ export class Race {
     this.cars=[selected,...CARS.filter(c=>c!==selected)].map((c,i)=>createCar(c,i,this.track)); this.player=this.cars[0];
   }
   start() { if(this.phase==='menu') this.phase='countdown'; }
-  stopTransient(car) { car.boostActive=false; car.drifting=false; car.handbrake=false; car.driftAngle=smooth(car.driftAngle,0,ARCADE.yawRateResponse,1/30); }
+  stopTransient(car, cooldown=false) {
+    if(cooldown&&car.boostActive) car.nitroCooldown=ARCADE.nitroCooldown;
+    car.boostActive=false; car.drifting=false; car.handbrake=false; car.driftAngle=smooth(car.driftAngle,0,ARCADE.yawRateResponse,1/30);
+  }
   pause() {
-    if(['countdown','racing'].includes(this.phase)) {this.pausedPhase=this.phase;this.phase='paused';this.cars.forEach(c=>{c.boostActive=false;c.drifting=false;c.handbrake=false;});}
+    if(['countdown','racing'].includes(this.phase)) {this.pausedPhase=this.phase;this.phase='paused';this.cars.forEach(c=>this.stopTransient(c,true));}
     else if(this.phase==='paused') {this.phase=this.pausedPhase;this.pausedPhase=null;}
   }
   tell(car,text) { car.notification=text;car.noticeUntil=this.time+4; }
@@ -95,8 +98,9 @@ export class Race {
     if(this.phase!=='racing'||car.finished||car.repairCooldown>0) return false;
     const safe=car.nextGate===0?-2:(car.nextGate-1)*this.track.gateSize+2;
     const p=this.track.at(safe,car.index===0?0:2.8*(car.index===1?1:-1));
+    const interruptedBoost=car.boostActive;
     car.x=p.x;car.z=p.z;car.yaw=p.heading;car.vx=0;car.vz=0;car.speed=0;car.steer=0;car.yawRate=0;car.progress=safe;car.previousS=p.s;car.hint=p.index;car.offTime=0;car.offPenalized=false;car.stuckTime=0;car.repairCooldown=3;
-    car.boostActive=false;car.drifting=false;car.driftAngle=0;car.handbrake=false;car.steeringAngle=0;
+    car.boostActive=false;car.drifting=false;car.driftAngle=0;car.handbrake=false;car.steeringAngle=0;if(interruptedBoost) car.nitroCooldown=ARCADE.nitroCooldown;
     if(kind==='repair') car.damage={engine:0,steering:0,tires:0};
     this.penalty(car,PENALTIES[kind],kind==='repair'?'Repaired and returned':'Skipped checkpoint'); return true;
   }
@@ -111,12 +115,13 @@ export class Race {
     const target=this.track.at(car.progress+look,lane), error=angle(Math.atan2(target.x-car.x,target.z-car.z)-car.yaw);
     const rawSteer=Math.atan2(2*car.model.wheelbase*Math.sin(error),look);
     const steer=clamp(rawSteer/(maxSteerFor(speed)*(1-car.damage.steering*.4)), -1, 1);
-    const mu=car.model.grip*ARCADE.gripBoost*(this.weather==='wet'?0.66:1)*(1-car.damage.tires*.35);
+    const longitudinalMu=car.model.grip*(this.weather==='wet'?0.66:1)*(1-car.damage.tires*.35);
+    const cornerMu=longitudinalMu*ARCADE.gripBoost;
     let targetSpeed=car.model.topSpeed*.94;
     for(const d of [3,12,24,40,65,95]) {
       const cur=Math.max(Math.abs(this.track.curvature(car.progress+d)),0.0003);
-      const corner=Math.sqrt(mu*9.81/cur)*.82;
-      targetSpeed=Math.min(targetSpeed,Math.sqrt(corner*corner+2*mu*9.81*Math.max(0,d-10)*.74));
+      const corner=Math.sqrt(cornerMu*9.81/cur)*.82;
+      targetSpeed=Math.min(targetSpeed,Math.sqrt(corner*corner+2*longitudinalMu*9.81*Math.max(0,d-10)*.74));
     }
     if(Math.abs(error)>0.75) targetSpeed=Math.min(targetSpeed,18);
     return {throttle:clamp((targetSpeed-speed)*.7,0,1),brake:clamp((speed-targetSpeed)*.32,0,1),steer,boost:false,handbrake:false};
@@ -125,18 +130,18 @@ export class Race {
   step(dt,input={}) {
     if(!Number.isFinite(dt)||dt<=0) return;
     dt=Math.min(dt,1/30);
-    if(this.phase==='countdown') {this.cars.forEach(c=>{c.boostActive=false;c.drifting=false;c.handbrake=false;});this.countdown-=dt;if(this.countdown<=0)this.phase='racing';return;}
-    if(this.phase!=='racing') {this.cars.forEach(c=>{c.boostActive=false;c.drifting=false;c.handbrake=false;});return;}
+    if(this.phase==='countdown') {this.cars.forEach(c=>this.stopTransient(c,false));this.countdown-=dt;if(this.countdown<=0)this.phase='racing';return;}
+    if(this.phase!=='racing') {this.cars.forEach(c=>this.stopTransient(c,false));return;}
     this.time+=dt;
     for(const car of this.cars) {
       car.impactCooldown=Math.max(0,car.impactCooldown-dt);car.repairCooldown=Math.max(0,car.repairCooldown-dt);
-      if(car.finished) {car.boostActive=false;car.drifting=false;car.handbrake=false;continue;}
+      if(car.finished) {this.stopTransient(car,false);continue;}
       this.drive(car,car.index===0?input:this.ai(car),dt);
       this.advance(car,dt);
       if(car.index>0) { car.stuckTime=car.speed<2?car.stuckTime+dt:0; if(car.stuckTime>5)this.repair(car); }
     }
     this.collisions();
-    if(this.cars.every(c=>c.finished)) {this.phase='finished';this.cars.forEach(c=>{c.boostActive=false;c.drifting=false;c.handbrake=false;});}
+    if(this.cars.every(c=>c.finished)) {this.phase='finished';this.cars.forEach(c=>this.stopTransient(c,false));}
   }
 
   drive(car,input,dt) {
@@ -149,11 +154,14 @@ export class Race {
     car.steer=smooth(car.steer,targetSteer,reversing?ARCADE.steerReverseRate:(turnIn?ARCADE.steerTurnInRate:16),dt);
     car.handbrake=!!input.handbrake;
     const contact=this.track.project(car.x,car.z,car.hint),off=contact.distance>HALF_WIDTH;
-    const fx=Math.sin(car.yaw),fz=Math.cos(car.yaw);
     const velocitySpeed=Math.hypot(car.vx,car.vz);
-    let longitudinal=Math.max(0, velocitySpeed, car.speed);
-    const grip=car.model.grip*ARCADE.gripBoost*(this.weather==='wet'?.66:1)*(off?.47:1)*(1-car.damage.tires*.4);
-    const downforce=1+Math.min(.30,longitudinal*longitudinal*.00007),traction=grip*9.81*downforce;
+    let longitudinal=Math.max(0, velocitySpeed);
+    const weatherGrip=this.weather==='wet'?.66:1;
+    const baseGrip=car.model.grip*weatherGrip*(off?.47:1)*(1-car.damage.tires*.4);
+    const arcadeGrip=baseGrip*ARCADE.gripBoost;
+    const downforce=1+Math.min(.30,longitudinal*longitudinal*.00007);
+    const longitudinalTraction=baseGrip*9.81*downforce;
+    const lateralTraction=arcadeGrip*9.81*downforce;
     const boostHeld=!!input.boost;
     const wasBoost=car.boostActive;
     car.boostActive=this.phase==='racing'&&boostHeld&&car.throttle>.2&&longitudinal>=4&&car.brake<.1&&!car.handbrake&&car.nitro>0;
@@ -168,15 +176,18 @@ export class Race {
     const driveForce=car.model.acceleration*car.throttle*(1-car.damage.engine*.55)/(1+longitudinal*.018);
     const braking=car.brake*18;
     const boostAccel=car.boostActive?ARCADE.nitroAccel:0;
-    car.tc=driveForce>traction*.90;car.abs=braking>traction*.95&&longitudinal>2;
-    const acceleration=Math.min(driveForce,traction*.90)+boostAccel-Math.min(braking,traction*.95)-.32-longitudinal*longitudinal*.00065-(off?longitudinal*.38:0);
-    const topSpeed=car.model.topSpeed*(car.boostActive?ARCADE.nitroTopSpeed:1)*(1-car.damage.engine*.28);
+    car.tc=driveForce>longitudinalTraction*.90;car.abs=braking>longitudinalTraction*.95&&longitudinal>2;
+    const drag=-.32-longitudinal*longitudinal*.00065-(off?longitudinal*.38:0);
+    let acceleration=Math.min(driveForce,longitudinalTraction*.90)+boostAccel-Math.min(braking,longitudinalTraction*.95)+drag;
+    const normalTopSpeed=car.model.topSpeed*(1-car.damage.engine*.28);
+    if(!car.boostActive&&longitudinal>normalTopSpeed) acceleration=Math.min(acceleration,drag-Math.min(braking,longitudinalTraction*.95));
+    const topSpeed=car.boostActive?normalTopSpeed*ARCADE.nitroTopSpeed:Math.max(longitudinal,normalTopSpeed);
     longitudinal=clamp(longitudinal+acceleration*dt,0,topSpeed);
     const maxSteer=maxSteerFor(longitudinal);
     const wheelAngle=car.steer*maxSteer*(1-car.damage.steering*.4)+Math.sin(this.time*1.6)*car.damage.steering*.016;
     car.steeringAngle=wheelAngle;
     const requested=longitudinal/car.model.wheelbase*Math.tan(wheelAngle);
-    const yawLimit=traction/Math.max(longitudinal,5)*(car.drifting?1.15:1);
+    const yawLimit=lateralTraction/Math.max(longitudinal,5)*(car.drifting?1.15:1);
     car.yawRate=smooth(car.yawRate,clamp(requested,-yawLimit,yawLimit),ARCADE.yawRateResponse,dt);
     const wantsDrift=car.handbrake&&longitudinal>ARCADE.driftMinSpeed&&Math.abs(car.steer)>.12;
     const driftTarget=wantsDrift?clamp(car.steer*ARCADE.maxDriftAngle*((longitudinal-ARCADE.driftMinSpeed)/24),-ARCADE.maxDriftAngle,ARCADE.maxDriftAngle):0;
@@ -186,7 +197,7 @@ export class Race {
     car.yaw=angle(car.yaw+car.yawRate*dt);
     const currentTravel=velocitySpeed>.2?Math.atan2(car.vx,car.vz):car.yaw;
     const targetTravel=angle(car.yaw-car.driftAngle);
-    const alignRate=grip*(car.drifting?2.0:5.2);
+    const alignRate=arcadeGrip*(car.drifting?2.0:5.2);
     const travel=angle(currentTravel+angle(targetTravel-currentTravel)*(1-Math.exp(-alignRate*dt)));
     car.vx=Math.sin(travel)*longitudinal;car.vz=Math.cos(travel)*longitudinal;
     car.x+=car.vx*dt;car.z+=car.vz*dt;car.speed=longitudinal;
@@ -220,7 +231,7 @@ export class Race {
           const lapTime=this.time-car.lapStart;
           car.lapTimes.push({time:lapTime,valid:car.lapValid});
           if(car.lapValid) car.bestLap=car.bestLap===null?lapTime:Math.min(car.bestLap,lapTime);
-          if(car.lapTimes.length===LAPS) {car.finished=true;car.finishTime=this.time;car.vx=0;car.vz=0;car.speed=0;car.boostActive=false;car.drifting=false;car.driftAngle=0;car.handbrake=false;this.firstFinish??=this.time;}
+          if(car.lapTimes.length===LAPS) {car.finished=true;car.finishTime=this.time;car.vx=0;car.vz=0;car.speed=0;this.stopTransient(car,false);this.firstFinish??=this.time;}
         }
         car.lapStart=this.time;car.lapValid=true;car.lap=Math.min(LAPS,car.lapTimes.length+1);
       }

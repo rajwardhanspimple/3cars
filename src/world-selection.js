@@ -3,6 +3,7 @@ import { buildCityWorld } from './city-world.js';
 import { applyCelShading, registerCelPalette } from './cel-shading.js';
 import { installCelSurfaceDetails } from './cel-surface-details.js';
 import { installNightSkyline, NIGHT_SKYLINE } from './night-skyline.js';
+import { installNightGroundLighting, NIGHT_GROUND_LIGHTING } from './night-ground-lighting.js';
 import { orientGroundSurfaces } from './surface-geometry.js';
 import { MOUNTAIN_TRACK, trackInfo } from './tracks.js';
 
@@ -18,8 +19,8 @@ export function applyDaytimeCel(view) {
  return view.celShading;
 }
 
-// Apply after city readiness: its original mild preset must not override the
-// stronger shared defaults. No city construction, light, or gameplay changes.
+// Apply after city readiness so its original preset cannot restore night sun.
+// Ground uses hemispheric fill and compact pools tied to visible lamp emitters.
 export function applyNighttimeCel(view) {
  registerCelPalette('city-night', {
   shadowColor:'#6865a8', rimColor:'#8cdfff', fogColor:'#151b50',
@@ -29,7 +30,10 @@ export function applyNighttimeCel(view) {
   materialTextureStrengths:{asphalt:0,'city-ground':0}
  });
  view.celShading = applyCelShading(view, {
-  palette:'city-night', bandCount:3, terminator:.28, ambientStrength:.22, sunStrength:.95,
+  palette:'city-night', bandCount:3, terminator:.28,
+  ambientStrength:NIGHT_GROUND_LIGHTING.ambientStrength,
+  sunStrength:NIGHT_GROUND_LIGHTING.sunStrength,
+  specularStrength:NIGHT_GROUND_LIGHTING.specularStrength,
   shadowStrength:.55, textureStrength:.12, textureLevels:4,
   grade:{toneMappingEnabled:false, exposure:1.08, contrast:1.18, saturation:42},
   bloom:{enabled:view.quality==='high', threshold:NIGHT_SKYLINE.bloomThreshold,
@@ -38,6 +42,7 @@ export function applyNighttimeCel(view) {
    cutoff:view.quality==='high'?110:80,maxWidth:.12,nearBoost:.5,nearDistance:24,carBoost:1.3}
  });
  installCelSurfaceDetails(view);
+ installNightGroundLighting(view);
  installNightSkyline(view);
  return view.celShading;
 }

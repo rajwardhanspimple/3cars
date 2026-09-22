@@ -8,12 +8,14 @@ const $=id=>document.getElementById(id);
 const ids=['menu','hud','pause-panel','results','error','error-message','setup','start','weather','quality','mute','saved-best','history-count','race-history','storage-status','race-canvas','position','lap','race-time','standings','current-lap','best-lap','penalty','engine-condition','steering-condition','tires-condition','rpm','rpm-fill','gear','speed','abs','tc','conditions','notification','countdown','minimap','result-title','result-summary','result-list','nitro-meter','nitro-value','nitro-status','drift-status'];
 const ui=Object.fromEntries(ids.map(id=>[id,$(id)]));
 const records=new LocalRecords(),audio=new RaceAudio(),keys=new Set();
+const MOUNTAIN=Object.freeze({id:'mountain-preview-v1',name:'Sakura Pass',announcement:'Sakura Pass / mountain preview'});
 let settings=records.loadSettings(),race=new Race(settings),view,simulation,saved=false,loading=true,viewReady=false,loadRevision=0,disposed=false,failed=false,pausePending=false,windowFocused=document.hasFocus(),loadLostFocus=false,last=performance.now(),previousPhase=null,frameId,lastSound=performance.now(),lastHUD=0;
 export const formatTime=seconds=>{if(seconds===null||!Number.isFinite(seconds))return 'None yet';const ms=Math.max(0,Math.floor(seconds*1000));return `${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}.${String(ms%1000).padStart(3,'0')}`;};
 const text=(id,value)=>{const node=ui[id];if(node&&node.textContent!==String(value))node.textContent=String(value);};
 const selected=()=>({carId:ui.setup.elements.carId.value,weather:ui.weather.value,quality:ui.quality.value,muted:settings.muted});
 const pressed=(...codes)=>codes.some(code=>keys.has(code))?1:0;
 const lapDisplay=p=>{if(p.finished)return 'Finished';if(p.lapStart===null)return 'Ready';const lapTime=formatTime(race.time-p.lapStart);return p.lapValid?lapTime:`${lapTime} (invalid)`;};
+const visibleNotification=p=>p.finished&&race.phase==='racing'?'Finished. Waiting for the other drivers.':p.noticeUntil>race.time&&p.notification!=='Skipped checkpoint +10s'?p.notification:'';
 function inputState(){return loading||race.phase==='paused'?{}:{throttle:pressed('KeyW','ArrowUp'),brake:pressed('KeyS','ArrowDown'),steer:pressed('KeyD','ArrowRight')-pressed('KeyA','ArrowLeft'),handbrake:!!pressed('Space'),boost:!!pressed('ShiftLeft','ShiftRight')};}
 function sendInput(){simulation?.input(inputState());}
 function clearInput(){keys.clear();simulation?.input({});}
@@ -35,7 +37,7 @@ function applySnapshot(state){
  if(Array.isArray(state.props))race.props=state.props;
  for(let i=0;i<race.cars.length;i++)Object.assign(race.cars[i],state.cars[i]);
  race.player=race.cars[0];
- if(view?.scene)view.scene.metadata={...view.scene.metadata,simulation:{phase:race.phase,time:race.time,steer:race.player.steer,nitro:race.player.nitro,boostActive:race.player.boostActive,drifting:race.player.drifting,props:race.props}};
+ if(view?.scene)view.scene.metadata={...view.scene.metadata,simulation:{phase:race.phase,time:race.time,steer:race.player.steer,nitro:race.player.nitro,boostActive:race.player.boostActive,drifting:race.player.drifting,props:race.props,routeId:MOUNTAIN.id,routeName:MOUNTAIN.name}};
  if(!loading){syncPhase();const now=performance.now();if(now-lastHUD>=66||race.phase==='paused'){updateHUD();lastHUD=now;}}
 }
 
@@ -44,6 +46,7 @@ async function resetRace(start=false,focusTarget=null){
  if(disposed||failed||loading&&view)return;
  const generation=++loadRevision;saved=false;viewReady=false;loadLostFocus=false;setLoading(true,start?'Getting ready...':'Loading full-detail Mustang...');ui.error.hidden=true;
  const config=selected();race=new Race(config);
+ race.route=MOUNTAIN;
  try{
   const physicsReady=simulation.reset(config);
   if(!view||view.quality!==config.quality){view?.dispose();view=new RaceView(ui['race-canvas'],race,config);await Promise.all([view.ready,physicsReady]);}
@@ -66,7 +69,7 @@ function syncPhase(){
 
 function finishRace(){
  const order=race.standings(),p=race.player,position=order.indexOf(p)+1;
- text('result-title',position===1?'You take the win.':'Race complete');text('result-summary',`P${position} of 3. ${LAPS} laps at ${CIRCUIT.name} in ${formatTime(p.finishTime+p.penalty)}.`);ui['result-list'].replaceChildren();
+ text('result-title',position===1?'You take the win.':'Race complete');text('result-summary',`P${position} of 3. ${LAPS} laps at ${MOUNTAIN.name} in ${formatTime(p.finishTime+p.penalty)}.`);ui['result-list'].replaceChildren();
  for(const [i,c]of order.entries()){const li=document.createElement('li'),name=document.createElement('span'),right=document.createElement('span'),detail=document.createElement('small');name.textContent=`${i+1}. ${c.name}`;right.textContent=formatTime(c.finishTime+c.penalty);detail.textContent=`Ford Mustang 2015 / ${c.model.name} / penalties +${c.penalty}s`;name.append(detail);li.append(name,right);ui['result-list'].append(li);}
  if(!saved){saved=true;records.recordRace({carId:p.model.id,weather:race.weather,position,time:p.finishTime,penalty:p.penalty,bestLap:p.bestLap,finishedAt:new Date().toISOString()});renderHistory();}
 }
@@ -81,7 +84,7 @@ function updateHUD(){
  text('nitro-value',`${Math.round(p.nitro??100)}%`);if(ui['nitro-meter'])ui['nitro-meter'].value=p.nitro??100;
  text('nitro-status',p.boostActive?'Boosting':p.nitroCooldown>0?`Cooling ${p.nitroCooldown.toFixed(1)}s`:p.nitro>=99.9?'Shift to boost':pressed('ShiftLeft','ShiftRight')?'Release Shift to recharge':'Recharging');
  text('drift-status',p.drifting?'Drifting. Release Space to grip.':'Space: handbrake');document.body.dataset.boost=String(!!p.boostActive);document.body.dataset.drifting=String(!!p.drifting);
- text('notification',p.finished&&race.phase==='racing'?'Finished. Waiting for the other drivers.':p.noticeUntil>race.time?p.notification:'');ui.countdown.hidden=race.phase!=='countdown';if(race.phase==='countdown')text('countdown',Math.max(1,Math.ceil(race.countdown)));
+ text('notification',visibleNotification(p));ui.countdown.hidden=race.phase!=='countdown';if(race.phase==='countdown')text('countdown',Math.max(1,Math.ceil(race.countdown)));
  ui.standings.replaceChildren();
 
 for(const[i,c]of order.entries()){const li=document.createElement('li');if(c.index===0)li.className='you';const pos=document.createElement('span'),name=document.createElement('span'),gap=document.createElement('span');pos.textContent=i+1;name.textContent=c.name;gap.textContent=c.finished?formatTime(c.finishTime+c.penalty):i===0?'Leader':`~+${((order[0].progress-c.progress)/Math.max(10,c.speed)).toFixed(1)}s`;li.append(pos,name,gap);ui.standings.append(li);}drawMap();
@@ -93,7 +96,7 @@ function drawMap(){
  if(!map)return;
  const t=race.track,bounds=trackBounds(t.points),padding=14,titleHeight=14,canvasWidth=ui.minimap.width||240,canvasHeight=ui.minimap.height||195,plotWidth=canvasWidth-padding*2,plotHeight=canvasHeight-padding*2-titleHeight,scale=Math.min(plotWidth/Math.max(bounds.width,1),plotHeight/Math.max(bounds.depth,1)),centerX=canvasWidth/2,centerY=padding+plotHeight/2,project=p=>[centerX+(p.x-bounds.centerX)*scale,centerY+(p.z-bounds.centerZ)*scale];
  map.clearRect(0,0,canvasWidth,canvasHeight);map.lineJoin='round';map.lineCap='round';map.beginPath();t.points.forEach((p,i)=>{const[x,y]=project(p);if(i)map.lineTo(x,y);else map.moveTo(x,y);});map.closePath();map.strokeStyle='#b3c7d2';map.lineWidth=7;map.stroke();map.strokeStyle='#fff';map.lineWidth=2;map.stroke();
- const start=project(t.at(0));map.fillStyle='#173c56';map.fillRect(start[0]-3,start[1]-4,6,8);for(const c of [...race.cars].reverse()){const[x,y]=project(c);map.beginPath();map.arc(x,y,c.index===0?5:4,0,Math.PI*2);map.fillStyle=c.model.color;map.fill();map.strokeStyle=c.index===0?'#173c56':'#fff';map.lineWidth=2;map.stroke();}map.fillStyle='#173c56';map.font='11px Segoe UI, Arial';map.fillText(CIRCUIT.name,padding,canvasHeight-padding);
+ const start=project(t.at(0));map.fillStyle='#173c56';map.fillRect(start[0]-3,start[1]-4,6,8);for(const c of [...race.cars].reverse()){const[x,y]=project(c);map.beginPath();map.arc(x,y,c.index===0?5:4,0,Math.PI*2);map.fillStyle=c.model.color;map.fill();map.strokeStyle=c.index===0?'#173c56':'#fff';map.lineWidth=2;map.stroke();}map.fillStyle='#173c56';map.font='11px Segoe UI, Arial';map.fillText(MOUNTAIN.name,padding,canvasHeight-padding);
 }
 async function togglePause(){
  if(loading||pausePending||failed)return;pausePending=true;clearInput();

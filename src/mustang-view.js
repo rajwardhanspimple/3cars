@@ -36,12 +36,14 @@ export class RaceView extends CircuitView {
  cacheTailMaterials(){
   for(const node of this.carNodes||[])if(node?.imported&&!node.tailMaterial)node.tailMaterial=node.meshes?.find(mesh=>mesh.material?.name==='RedGlass')?.material||null;
  }
- render(){
+ render(dt){
   if(this.disposed||this.carNodes.length!==3)return;
-  const t=nowSeconds(),dt=clamp(t-(this._lastFrameTime||t),1/240,1/20);this._lastFrameTime=t;
-  this.elapsed+=dt;const race=this.race;
+  const wall=nowSeconds(),wallDt=clamp(wall-(this._lastFrameTime||wall),1/240,1/20);this._lastFrameTime=wall;
+  const race=this.race,frameDt=Number.isFinite(dt)?Math.max(0,dt):wallDt,stepDt=(race.phase==='paused'||race.phase==='finished')?0:clamp(frameDt,0,1/20);
+  if(race.phase==='menu')this.elapsed+=stepDt;
+  else this.elapsed+=stepDt;
   for(const car of race.cars){const node=this.carNodes[car.index];node.root.position.set(car.x,0,car.z);node.root.rotation.y=car.yaw;node.body.rotation.z=-(car.steer||0)*clamp(car.speed/80,0,.6)*.06;node.body.rotation.x=((car.brake||0)-(car.throttle||0))*.012;
-   for(const wheel of node.wheels){wheel.spin.rotation.x+=car.speed*dt/(wheel.radius||.43);if(wheel.front)wheel.pivot.rotation.y=car.steeringAngle||0;}
+   for(const wheel of node.wheels){wheel.spin.rotation.x+=car.speed*stepDt/(wheel.radius||.43);if(wheel.front)wheel.pivot.rotation.y=car.steeringAngle||0;}
    if(node.tailMaterial)node.tailMaterial.emissiveColor.set(.22+(car.brake||0)*.55,.003,.002);
   }
   const p=race.player,bodyX=Math.sin(p.yaw),bodyZ=Math.cos(p.yaw),speed=Math.max(0,p.speed||0),velSpeed=Math.hypot(p.vx||0,p.vz||0);
@@ -55,12 +57,12 @@ export class RaceView extends CircuitView {
    // Shift the car into the free space beside the setup panel.
    target=v(p.x+Math.cos(a)*1.25,.88,p.z-Math.sin(a)*1.25);
   }else{desired=v(p.x-lookX*(8.5+speed*.03),3.9+speed*.013,p.z-lookZ*(8.5+speed*.03));target=v(p.x+lookX*8+latX*steer*3.1,1.05,p.z+lookZ*8+latZ*steer*3.1);}
-  if(!this.cameraReady){this.camera.position.copyFrom(desired);this.cameraReady=true;}else B.Vector3.LerpToRef(this.camera.position,desired,1-Math.exp(-dt*10),this.camera.position);
+  if(!this.cameraReady){this.camera.position.copyFrom(desired);this.cameraReady=true;}else B.Vector3.LerpToRef(this.camera.position,desired,1-Math.exp(-stepDt*10),this.camera.position);
   this.camera.setTarget(target);
-  const boostTarget=(!this.reducedMotion&&race.phase==='racing'&&p.boostActive)?1:0;this._boostFov+= (boostTarget-this._boostFov)*(1-Math.exp(-dt*7));
-  this.camera.fov=race.phase==='menu'?.65:.8+clamp(speed/500,0,.12)+(this.reducedMotion?0:this._boostFov*.035);
+  const boostTarget=(!this.reducedMotion&&race.phase==='racing'&&p.boostActive)?1:0;this._boostFov+=(boostTarget-this._boostFov)*(1-Math.exp(-stepDt*7));
+  this.camera.fov=race.phase==='menu'?.65:(this.reducedMotion?.8:.8+clamp(speed/500,0,.12)+this._boostFov*.035);
   if(race.weather==='wet'){for(let i=0;i<this.rainLines.length;i++){const x=p.x+Math.sin(i*127.1)*25,z=p.z+Math.cos(i*311.7)*25,y=((i*.71-this.elapsed*23)%20+20)%20;this.rainLines[i][0].set(x,y,z);this.rainLines[i][1].set(x-.18,y-1.2,z+.08);}B.MeshBuilder.CreateLineSystem('rain',{lines:this.rainLines,instance:this.rain});}
-  this.effects?.update(this.carNodes,race.cars,race.phase==='paused'?0:dt,race.phase);
+  this.effects?.update(this.carNodes,race.cars,stepDt,race.phase);
   this.scene.render();
  }
  dispose(){if(this.disposed)return;this.effects?.dispose();this.effects=null;this.disposed=true;this.revision=(this.revision||0)+1;super.dispose();}

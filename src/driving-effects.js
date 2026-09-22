@@ -16,7 +16,7 @@ export class DrivingEffects{
  constructor(scene,{reducedMotion=false}={}){
   this.scene=scene;this.reducedMotion=reducedMotion;this.disposed=false;this.smokeIndex=0;this.skidIndex=0;this.emitClock=0;this.carStates=[];this.flames=[];
   this.smokeCount=reducedMotion?18:42;this.skidCount=96;this.smokeTexture=makeSmokeTexture(scene);
-  this.smokeMaterial=new B.StandardMaterial('drift-smoke-material',scene);this.smokeMaterial.diffuseColor=new B.Color3(.62,.64,.62);this.smokeMaterial.opacityTexture=this.smokeTexture;this.smokeMaterial.alpha=.62;this.smokeMaterial.specularColor=B.Color3.Black();this.smokeMaterial.transparencyMode=B.Material.MATERIAL_ALPHABLEND;this.smokeMaterial.disableLighting=true;
+  this.smokeMaterial=new B.StandardMaterial('drift-smoke-material',scene);this.smokeMaterial.diffuseColor=new B.Color3(.62,.64,.62);this.smokeMaterial.emissiveColor=new B.Color3(.38,.39,.37);this.smokeMaterial.opacityTexture=this.smokeTexture;this.smokeMaterial.alpha=.62;this.smokeMaterial.specularColor=B.Color3.Black();this.smokeMaterial.transparencyMode=B.Material.MATERIAL_ALPHABLEND;this.smokeMaterial.disableLighting=true;
   this.skidMaterial=new B.StandardMaterial('skid-mark-material',scene);this.skidMaterial.diffuseColor=new B.Color3(.015,.014,.012);this.skidMaterial.alpha=.36;this.skidMaterial.specularColor=B.Color3.Black();this.skidMaterial.transparencyMode=B.Material.MATERIAL_ALPHABLEND;
   this.flameMaterial=new B.StandardMaterial('boost-flame-material',scene);this.flameMaterial.emissiveColor=new B.Color3(.14,.42,1);this.flameMaterial.diffuseColor=new B.Color3(.05,.18,.9);this.flameMaterial.alpha=.46;this.flameMaterial.specularColor=B.Color3.Black();this.flameMaterial.transparencyMode=B.Material.MATERIAL_ALPHABLEND;
   this.smoke=Array.from({length:this.smokeCount},(_,i)=>{const mesh=B.MeshBuilder.CreatePlane(`tire-smoke-${i}`,{size:1},scene);mesh.material=this.smokeMaterial;mesh.billboardMode=B.Mesh.BILLBOARDMODE_ALL;mesh.isPickable=false;mesh.setEnabled(false);return{mesh,life:0,age:0,x:0,y:0,z:0,rise:0,scale:1};});
@@ -36,15 +36,18 @@ export class DrivingEffects{
   if(!racing||dt<=0)return;
   this.emitClock+=dt;const emitStep=this.reducedMotion ? .13 : .055;if(this.emitClock<emitStep)return;this.emitClock=0;
   for(const car of cars){const state=this.carStates[car.index];if(!state)continue;const speed=Math.max(0,car.speed||0),slip=clamp((car.slip||0)+(car.drifting ? .45 : 0)+(car.brake||0)*.28,0,1);
-   if(!state.ready){state.lastX=state.lastSkidX=car.x;state.lastZ=state.lastSkidZ=car.z;state.ready=true;continue;}
-   if(speed<5||slip<.12){state.lastX=car.x;state.lastZ=car.z;continue;}
+   if(!state.ready){this.syncState(state,car);state.ready=true;continue;}
+   if(Math.hypot(car.x-state.lastX,car.z-state.lastZ)>10){this.syncState(state,car);continue;}
+   if(speed<5||slip<.12){this.syncState(state,car);continue;}
    if(!this.reducedMotion||slip>.42)this.emitSmoke(car,slip);
    const dx=car.x-state.lastSkidX,dz=car.z-state.lastSkidZ,dist=Math.hypot(dx,dz);
+   if(dist>10){this.syncState(state,car);continue;}
    if(dist>.82&&(car.drifting||car.brake>.35||slip>.45)){this.placeSkid(car,state,dx,dz,dist);state.lastSkidX=car.x;state.lastSkidZ=car.z;}
    state.lastX=car.x;state.lastZ=car.z;
   }
   this.updateMetadata();
  }
+ syncState(state,car){state.lastX=state.lastSkidX=car.x;state.lastZ=state.lastSkidZ=car.z;}
  updateSmoke(dt){
   if(dt<=0)return;
   for(const item of this.smoke)if(item.life>0){item.age+=dt;const t=item.age/item.life;if(t>=1){item.life=0;item.mesh.setEnabled(false);continue;}item.y+=item.rise*dt;item.mesh.position.set(item.x,item.y,item.z);const s=item.scale*(1+t*.9);item.mesh.scaling.set(s,s,s);item.mesh.visibility=(1-t)*(.38+item.scale*.08);}

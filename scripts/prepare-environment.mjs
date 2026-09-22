@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 import {readFile,writeFile,mkdir,rename} from 'node:fs/promises';
 import {resolve,dirname,relative} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
+import {optimizeGreenTree} from './optimize-foliage.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url)),dest=resolve(root,'assets/environment');
 const manifest=JSON.parse(await readFile(new URL('../assets/environment-sources.json',import.meta.url),'utf8'));
 const digest=(bytes,kind='sha256')=>createHash(kind).update(bytes).digest('hex');
@@ -18,7 +19,7 @@ function safePath(base,path){const p=resolve(base,path);if(relative(base,p).star
 export async function prepareEnvironment(){
  await mkdir(dest,{recursive:true});
  const cherryBytes=await download(manifest.cherry.url,resolve(dest,'cherry.glb'),null,manifest.cherry.bytes),cherry=glbJSON(cherryBytes),extra=JSON.stringify(cherry.asset?.extras||{});
- console.log('CHERRY_SOURCE_METADATA',extra);
+ if(digest(cherryBytes)!=='43c28c4611abdfc058fa484383156e70f5f1cf6ee52b19eb7f97851867a277fc')throw Error('Cherry source checksum changed');
  if(!extra.includes('db1b69851fd449928d36767c4f15502d')||!extra.toLowerCase().includes(manifest.cherry.creator)||!extra.includes(manifest.cherry.license))throw Error('Cherry mirror attribution does not match verified creator listing');
  for(const uri of [...(cherry.buffers||[]),...(cherry.images||[])].map(x=>x.uri).filter(Boolean))if(!uri.startsWith('data:'))throw Error('External cherry asset URI');
  const textureRecords=[];
@@ -32,11 +33,10 @@ export async function prepareEnvironment(){
   if(!include?.url||!include?.md5)throw Error('Unverified glTF dependency '+key);
   const local=key.replace(/^\.\//,'');await download(include.url,safePath(greenDir,local),include.md5,include.size);item.uri=local;
  }
- // All dependencies stay same-origin in the published build.
  await writeFile(resolve(greenDir,'scene.gltf'),JSON.stringify(gltf));
- const greenTriangles=(gltf.meshes||[]).reduce((n,m)=>n+m.primitives.reduce((k,p)=>k+(gltf.accessors[p.indices]?.count||0)/3,0),0);
+ const optimization=await optimizeGreenTree();
  const cherryTriangles=(cherry.meshes||[]).reduce((n,m)=>n+m.primitives.reduce((k,p)=>k+(cherry.accessors[p.indices]?.count||0)/3,0),0);
- const report={cherry:{sha256:digest(cherryBytes),triangles:cherryTriangles,source:manifest.cherry.source,license:manifest.cherry.license},green:{source:'https://polyhaven.com/a/jacaranda_tree',sha256:digest(sourceBytes),triangles:greenTriangles,license:'CC0-1.0'},textures:textureRecords};
+ const report={cherry:{sha256:digest(cherryBytes),triangles:cherryTriangles,source:manifest.cherry.source,license:manifest.cherry.license},green:{source:'https://polyhaven.com/a/jacaranda_tree',sha256:digest(sourceBytes),license:'CC0-1.0',optimization},textures:textureRecords};
  await writeFile(resolve(dest,'verification.json'),JSON.stringify(report,null,2));console.log('ENVIRONMENT_ASSETS_VERIFIED',JSON.stringify(report));return report;
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href)prepareEnvironment().catch(e=>{console.error(e.stack);process.exitCode=1;});

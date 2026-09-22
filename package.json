@@ -13,5 +13,5 @@
   "test:browser":"playwright test"
  },
  "dependencies":{"babylonjs":"7.54.3","babylonjs-loaders":"7.54.3"},
- "devDependencies":{"@playwright/test":"1.56.1","three":"0.180.0"}
+ "devDependencies":{"@playwright/test":"1.56.1","three":"0.180.0","@gltf-transform/core":"4.2.1","@gltf-transform/extensions":"4.2.1","@gltf-transform/functions":"4.2.1","meshoptimizer":"0.22.0"}
 }

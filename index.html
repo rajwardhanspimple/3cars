@@ -1,16 +1,16 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#173c56"><meta name="description" content="Drive three full-detail Mustang racers through Sakura Pass, a mountain preview route.">
-<title>3cars | Sakura Pass mountain preview</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23173c56'/%3E%3Ctext x='32' y='49' text-anchor='middle' font-size='49' font-family='Arial' font-weight='bold' fill='white'%3E3%3C/text%3E%3C/svg%3E"><link rel="stylesheet" href="./styles.css"><link rel="stylesheet" href="./arcade.css">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#173c56"><meta name="description" content="Drive three full-detail Mustang racers through Sakura Pass, a mountain road circuit.">
+<title>3cars | Sakura Pass mountain circuit</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23173c56'/%3E%3Ctext x='32' y='49' text-anchor='middle' font-size='49' font-family='Arial' font-weight='bold' fill='white'%3E3%3C/text%3E%3C/svg%3E"><link rel="stylesheet" href="./styles.css"><link rel="stylesheet" href="./arcade.css">
 </head>
 <body>
-<canvas id="race-canvas" tabindex="0" aria-label="3D Sakura Pass mountain preview. Use W or Up to accelerate, S or Down to brake, Space for manual drift, Shift for boost, and A or D to steer."></canvas>
-<header class="topbar"><a class="brand" href="./" aria-label="3cars home">3<span>cars</span><i></i></a><span class="track-label">Sakura Pass <span>mountain preview</span></span><button id="mute" class="quiet" type="button" aria-pressed="false">Sound on</button></header>
+<canvas id="race-canvas" tabindex="0" aria-label="3D Sakura Pass mountain circuit. Use W or Up to accelerate, S or Down to brake, Space for manual drift, Shift for boost, and A or D to steer."></canvas>
+<header class="topbar"><a class="brand" href="./" aria-label="3cars home">3<span>cars</span><i></i></a><span class="track-label">Sakura Pass <span>mountain circuit</span></span><button id="mute" class="quiet" type="button" aria-pressed="false">Sound on</button></header>
 <main>
 <section id="menu" class="setup-panel" aria-labelledby="game-title">
 <p class="circuit-caption">Sakura Pass</p><h1 id="game-title">Drift the<br>mountain line.</h1>
-<p class="intro">Sakura Pass is the approved mountain preview: three full-detail Mustang racers on a dry or wet route preview. Use Space for manual drift. Two AI rivals push controlled drifts through tight corners.</p>
+<p class="intro">Three full-detail Mustang racers on a dusk mountain road. Hold Space to break the rear loose, steer through the slide, then boost off the exit. Two AI rivals drift the tight corners with you.</p>
 <p id="model-status" class="fine-print" role="status">Loading shared Mustang geometry for all three cars...</p>
 <form id="setup"><fieldset class="cars"><legend>Choose your Mustang</legend>
 <label class="car-choice"><input type="radio" name="carId" value="vortex" checked><span class="swatch vortex"></span><span><strong>Vortex R</strong><small>Balanced chassis</small></span><span class="car-speed">281<small>km/h</small></span></label>
@@ -22,10 +22,10 @@
 <p class="best-record">Best clean lap <strong id="saved-best">No lap recorded</strong></p><button id="start" class="primary" type="submit" disabled>Loading Sakura Pass...</button>
 </form>
 
-<details class="help"><summary>Controls and race rules</summary><dl><dt>W / Up</dt><dd>Accelerate</dd><dt>S / Down</dt><dd>Brake</dd><dt>Space</dt><dd>Manual drift</dd><dt>Shift</dt><dd>Boost</dd><dt>A D / Left Right</dt><dd>Steer</dd><dt>P / Escape</dt><dd>Pause or resume</dd><dt>R</dt><dd>Repair and return, +20 seconds</dd><dt>M</dt><dd>Mute sound</dd></dl><p>Automatic gears. ABS and traction control are always on. Use Space to start a manual drift, steer through the corner, then use Shift for exit boost.</p><p>Boost lasts about 4 seconds from a full meter, then has a 2 second cooldown. It recharges at about 18 points per second, so a full refill takes about 5.6 seconds.</p><p>Track cuts add 5 seconds. Skipping a checkpoint does not move the car. That lap is invalid for records; cross the finish line to start the next lap normally. R is manual recovery (+20s).</p><p>Desktop keyboard required. This branch is a mountain preview only. It is not the final main release. All three cars use the same full-detail Mustang geometry. Visual approval is still required before publish.</p></details>
+<details class="help"><summary>Controls and race rules</summary><dl><dt>W / Up</dt><dd>Accelerate</dd><dt>S / Down</dt><dd>Brake, then reverse from a stop</dd><dt>Space</dt><dd>Manual drift</dd><dt>Shift</dt><dd>Boost</dd><dt>A D / Left Right</dt><dd>Steer</dd><dt>P / Escape</dt><dd>Pause or resume</dd><dt>R</dt><dd>Repair and return, +20 seconds</dd><dt>M</dt><dd>Mute sound</dd></dl><p>Automatic gears. ABS and traction control are always on. Hold Space with steering to break the rear loose, hold the slide, then use Shift for exit boost. Counter-steer or lift off to catch it.</p><p>Boost lasts about 4 seconds from a full meter, then has a 2 second cooldown. It recharges at about 18 points per second, so a full refill takes about 5.6 seconds.</p><p>Track cuts add 5 seconds. Skipping a checkpoint does not move the car. That lap is invalid for records; cross the finish line to start the next lap normally. R is manual recovery (+20s).</p><p>Trees, retaining walls and guardrails are solid, and cones scatter when you clip them. Desktop keyboard required. All three cars use the same full-detail Mustang geometry.</p></details>
 <details class="history"><summary>Recent Sakura Pass races <span id="history-count">0</span></summary><ol id="race-history"></ol></details>
 <p class="fine-print">Model shared by all three cars: <a href="https://sketchfab.com/3d-models/ford-mustang-2015-edition-4b1a593df06042e29dce6049b466f932" target="_blank" rel="noopener">Ford Mustang 2015 EDITION</a> by <a href="https://sketchfab.com/WarEntertainment" target="_blank" rel="noopener">WARENTERTAINMENT</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. Adapted materials and wheel animation. <a href="./THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener">Asset credits</a>.</p>
-<p id="storage-status" class="fine-print">Settings and Sakura Pass preview results stay in this browser.</p>
+<p id="storage-status" class="fine-print">Settings and Sakura Pass results stay in this browser.</p>
 </section>
 
 <section id="hud" class="hud" aria-label="Race information" hidden>

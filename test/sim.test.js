@@ -11,13 +11,15 @@ test('drive-based acceleration and braking stay isolated from opponents',()=>{
  for(const weather of ['dry','wet']){const r=new Race({weather});r.phase='racing';for(let i=0;i<120;i++)r.drive(r.player,{throttle:1},1/120);assert.ok(r.player.speed>2);for(let i=0;i<240;i++)r.drive(r.player,{brake:1},1/120);assert.ok(r.player.speed<.1,`${weather}: braking should stop the car`);}
 });
 test('countdown, pause and fixed-step safety',()=>{const r=new Race();r.start();stepFor(r,2);assert.equal(r.time,0);stepFor(r,1.1);assert.equal(r.phase,'racing');const time=r.time;r.pause();stepFor(r,1,{throttle:1,boost:true});assert.equal(r.time,time);assert.equal(r.player.boostActive,false);r.pause();r.step(NaN);assert.ok(Number.isFinite(r.time));});
+
 test('three different models and traction and ABS flags respond to low grip',()=>{assert.equal(new Set(CARS.map(c=>c.topSpeed)).size,3);const r=new Race({weather:'wet'});r.phase='racing';r.player.damage.tires=.9;for(let i=0;i<100;i++)r.drive(r.player,{throttle:1},1/120);assert.equal(r.player.tc,true);const p=r.track.at(50);r.player.x=p.x;r.player.z=p.z;r.player.yaw=p.heading;r.player.vx=Math.sin(p.heading)*40;r.player.vz=Math.cos(p.heading)*40;r.player.speed=40;r.player.brake=1;r.drive(r.player,{brake:1},1/120);assert.equal(r.player.abs,true);});
 
 test('repair returns to the validated gate, clears damage, and charges once',()=>{
  const r=new Race();r.phase='racing';r.player.damage.engine=.8;r.player.nitro=42;r.player.boostActive=true;r.player.drifting=true;r.player.driftAngle=.4;assert.equal(r.repair(),true);assert.equal(r.player.damage.engine,0);assert.equal(r.player.nitro,42);assert.equal(r.player.boostActive,false);assert.equal(r.player.drifting,false);assert.equal(r.player.driftAngle,0);assert.equal(r.player.penalty,PENALTIES.repair);assert.equal(r.player.nextGate,0);assert.equal(r.player.progress,-2);assert.equal(r.repair(),false);
  const later=new Race();later.phase='racing';later.player.nextGate=8;later.repair();assert.equal(later.player.nextGate,8);assert.equal(later.player.progress,7*later.track.gateSize+2);
 });
-test('skipped checkpoints reset progress and add a penalty',()=>{const r=new Race();r.phase='racing';const p=r.track.at(r.track.length*.35);r.player.x=p.x;r.player.z=p.z;r.step(1/120);assert.equal(r.player.penalty,PENALTIES.skip);assert.ok(r.player.progress<1);});
+test('skipped checkpoints invalidate the lap without penalty or relocation',()=>{const r=new Race();r.phase='racing';const p=r.track.at(r.track.length*.35);r.player.x=p.x;r.player.z=p.z;r.step(1/120);assert.equal(r.player.penalty,0);assert.equal(r.player.lapValid,false);assert.ok(r.player.progress>r.track.length*.2);assert.ok(r.player.nextGate>1);});
+
 test('checkpoints count five complete laps, not the initial start crossing',()=>{
  const r=new Race();r.phase='racing';const c=r.player;
  for(let gate=0;gate<=r.track.gates*LAPS;gate++){const s=gate*r.track.gateSize;c.progress=s-.1;c.previousS=r.track.at(s-.1).s;c.hint=r.track.at(s).index;const p=r.track.at(s+.1);c.x=p.x;c.z=p.z;r.time=gate+1;r.advance(c,1/120);}
@@ -31,6 +33,7 @@ test('engine damage reduces acceleration on an identical surface',()=>{
  for(let i=0;i<120;i++)for(const r of [clean,damaged]){const p=r.track.at(50);r.player.x=p.x;r.player.z=p.z;r.drive(r.player,{throttle:1},1/120);}
  assert.ok(damaged.player.speed<clean.player.speed,`${damaged.player.speed} < ${clean.player.speed}`);
 });
+
 test('tire damage reduces cornering grip at equal speed and steering',()=>{
  const clean=new Race(),damaged=new Race();place(clean,30,.32);place(damaged,30,.32);damaged.player.damage.tires=.8;
  for(const r of [clean,damaged])r.drive(r.player,{steer:.32},1/120);

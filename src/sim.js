@@ -1,10 +1,11 @@
 import {CIRCUIT, trackBounds as computeTrackBounds} from './circuit.js';
+import {mountainLayout,roadPose} from './mountain-layout.js';
 
 export const TAU = Math.PI * 2;
 export const LAPS = 5;
 export const HALF_WIDTH = 9;
 export const BARRIER = 17;
-export const PENALTIES = Object.freeze({ cut: 5, skip: 10, repair: 20 });
+export const PENALTIES = Object.freeze({ cut: 5, repair: 20 });
 export const ARCADE = Object.freeze({
   gripBoost: 2.75,
   steerTurnInRate: 20,
@@ -29,6 +30,7 @@ export const angle = n => mod(n + Math.PI, TAU) - Math.PI;
 const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (a, b, rate, dt) => lerp(a, b, 1 - Math.exp(-rate * dt));
 const maxSteerFor = speed => 0.52 / (1 + Math.max(0, speed) * 0.012);
+const carRadius = 1.9;
 
 export function makeTrack() {
   const controls = CIRCUIT.controls;
@@ -73,17 +75,18 @@ export function makeTrack() {
   return {id:CIRCUIT.id,name:CIRCUIT.name,bounds:computeTrackBounds(points),points,length,at,curvature,project, gates:24, gateSize:length/24};
 }
 
+function applyRoadPose(car){const pose=roadPose(car.x,car.z,car.yaw);car.y=pose.y;car.pitch=pose.pitch;car.roll=pose.roll;return car;}
 function createCar(model,index,track) {
   const progress=-10-index*7, p=track.at(progress,(index%2 ? -1 : 1)*2.2);
-  return {model,index,name:index===0?'You':index===1?'Mara':'Ellis',x:p.x,z:p.z,yaw:p.heading,vx:0,vz:0,speed:0,steer:0,steerTarget:0,steerReversing:false,throttle:0,brake:0,yawRate:0,gear:1,rpm:900,slip:0,tc:false,abs:false,
-    nitro:100,nitroCooldown:0,boostActive:false,drifting:false,driftAngle:0,handbrake:false,steeringAngle:0,
+  return applyRoadPose({model,index,name:index===0?'You':index===1?'Mara':'Ellis',x:p.x,z:p.z,yaw:p.heading,vx:0,vz:0,speed:0,steer:0,steerTarget:0,steerReversing:false,throttle:0,brake:0,yawRate:0,gear:1,rpm:900,slip:0,tc:false,abs:false,
+    nitro:100,nitroCooldown:0,boostActive:false,drifting:false,driftAngle:0,handbrake:false,steeringAngle:0,surface:'asphalt',
     progress,previousS:p.s,hint:p.index,nextGate:0,lap:1,lapStart:null,lapTimes:[],lapValid:true,bestLap:null,finished:false,finishTime:null,penalty:0,damage:{engine:0,steering:0,tires:0},offTime:0,offStart:0,offPenalized:false,impact:0,impactCooldown:0,stuckTime:0,repairCooldown:0,notification:'',noticeUntil:0,
-    aiDrift:{active:false,hold:0,cooldown:index===1?.35:.95,recover:0,side:0}};
+    aiDrift:{active:false,hold:0,cooldown:index===1?.35:.95,recover:0,side:0}});
 }
 
 export class Race {
   constructor({carId='vortex',weather='dry'}={}) {
-    this.track=makeTrack(); this.weather=weather==='wet'?'wet':'dry'; this.time=0; this.phase='menu'; this.countdown=3; this.firstFinish=null; this.pausedPhase=null;
+    this.track=makeTrack(); this.layout=mountainLayout(this.track); this.props=this.layout.props.map(p=>({...p})); this.weather=weather==='wet'?'wet':'dry'; this.time=0; this.phase='menu'; this.countdown=3; this.firstFinish=null; this.pausedPhase=null;
     const selected=CARS.find(c=>c.id===carId)||CARS[0];
     this.cars=[selected,...CARS.filter(c=>c!==selected)].map((c,i)=>createCar(c,i,this.track)); this.player=this.cars[0];
   }
@@ -99,6 +102,7 @@ export class Race {
   }
   tell(car,text) { car.notification=text;car.noticeUntil=this.time+4; }
   penalty(car,seconds,text) { car.penalty+=seconds;car.lapValid=false;this.tell(car,`${text} +${seconds}s`); }
+  invalidate(car,text='Checkpoint skipped. Lap invalid.') { if(car.lapValid)this.tell(car,text); car.lapValid=false; }
   repair(car=this.player, kind='repair') {
     if(this.phase!=='racing'||car.finished||car.repairCooldown>0) return false;
     const safe=car.nextGate===0?-2:(car.nextGate-1)*this.track.gateSize+2;
@@ -107,7 +111,7 @@ export class Race {
     car.x=p.x;car.z=p.z;car.yaw=p.heading;car.vx=0;car.vz=0;car.speed=0;car.steer=0;car.steerTarget=0;car.steerReversing=false;car.yawRate=0;car.progress=safe;car.previousS=p.s;car.hint=p.index;car.offTime=0;car.offPenalized=false;car.stuckTime=0;car.repairCooldown=3;
     car.boostActive=false;car.drifting=false;car.driftAngle=0;car.handbrake=false;car.steeringAngle=0;if(car.aiDrift){car.aiDrift.active=false;car.aiDrift.hold=0;car.aiDrift.cooldown=Math.max(car.aiDrift.cooldown,2);car.aiDrift.recover=1;}if(interruptedBoost) car.nitroCooldown=ARCADE.nitroCooldown;
     if(kind==='repair') car.damage={engine:0,steering:0,tires:0};
-    this.penalty(car,PENALTIES[kind],kind==='repair'?'Repaired and returned':'Skipped checkpoint'); return true;
+    applyRoadPose(car);this.penalty(car,PENALTIES.repair,'Repaired and returned'); return true;
   }
 
   ai(car,dt=1/30) {
@@ -149,23 +153,15 @@ export class Race {
       const otherContact=this.track.project(other.x,other.z,other.hint);
       return Math.abs(otherContact.lateral-contact.lateral)<5.5;
     });
+    const nearSolid=this.nearSolid(car.x,car.z,6.5);
     const scheduled=(Math.floor((car.progress+look)/this.track.gateSize)+car.index)%2===0;
-    const stable=Number.isFinite(speed)&&contact.distance<=HALF_WIDTH-1.1&&future.distance<=HALF_WIDTH-1.1&&BARRIER-contact.distance>7&&!nearCars&&car.offTime===0&&car.impactCooldown===0&&Math.abs(car.driftAngle)<.42&&car.slip<.58;
+    const stable=Number.isFinite(speed)&&contact.distance<=HALF_WIDTH-1.1&&future.distance<=HALF_WIDTH-1.1&&BARRIER-contact.distance>7&&!nearCars&&!nearSolid&&car.offTime===0&&car.impactCooldown===0&&Math.abs(car.driftAngle)<.42&&car.slip<.58;
     const cornerReady=Math.abs(strongestCurvature)>(this.weather==='wet'?.010:.012)&&Math.abs(strongestCurvature)<.085&&Math.abs(error)>.045&&Math.abs(error)<.68&&Math.abs(steer)>.18&&Math.sign(steer)===cornerSide;
     const speedReady=speed>=minSpeed&&speed<=speedCap&&targetSpeed<=speed+4;
-    if(drift.active&&(!stable||speed>speedCap+3||Math.sign(steer)!==drift.side)) {
-      drift.active=false;drift.hold=0;drift.recover=.7;drift.cooldown=Math.max(drift.cooldown,2.4);
-    }
-    if(!drift.active&&drift.cooldown===0&&drift.recover===0&&scheduled&&stable&&cornerReady&&speedReady) {
-      drift.active=true;drift.hold=this.weather==='wet'?.30:.42;drift.cooldown=(this.weather==='wet'?4.6:4.1)+car.index*.35;drift.side=cornerSide;
-    }
+    if(drift.active&&(!stable||speed>speedCap+3||Math.sign(steer)!==drift.side)) {drift.active=false;drift.hold=0;drift.recover=.7;drift.cooldown=Math.max(drift.cooldown,2.4);}
+    if(!drift.active&&drift.cooldown===0&&drift.recover===0&&scheduled&&stable&&cornerReady&&speedReady) {drift.active=true;drift.hold=this.weather==='wet'?.30:.42;drift.cooldown=(this.weather==='wet'?4.6:4.1)+car.index*.35;drift.side=cornerSide;}
     if(drift.active) {
-      drift.hold-=dt;
-      input.handbrake=drift.hold>0&&stable&&cornerReady&&speedReady;
-      input.boost=false;
-      input.steer=clamp(steer+drift.side*.08,-1,1);
-      input.throttle=Math.min(input.throttle,this.weather==='wet'?.48:.58);
-      input.brake=Math.max(input.brake,speed>targetSpeed+1.5?.12:0);
+      drift.hold-=dt; input.handbrake=drift.hold>0&&stable&&cornerReady&&speedReady; input.boost=false; input.steer=clamp(steer+drift.side*.08,-1,1); input.throttle=Math.min(input.throttle,this.weather==='wet'?.48:.58); input.brake=Math.max(input.brake,speed>targetSpeed+1.5?.12:0);
       if(!input.handbrake) {drift.active=false;drift.recover=.55;}
     }
     return input;
@@ -176,7 +172,7 @@ export class Race {
     dt=Math.min(dt,1/30);
     if(this.phase==='countdown') {this.cars.forEach(c=>this.stopTransient(c,false));this.countdown-=dt;if(this.countdown<=0)this.phase='racing';return;}
     if(this.phase!=='racing') {this.cars.forEach(c=>this.stopTransient(c,false));return;}
-    this.time+=dt;
+    this.time+=dt;this.updateProps(dt);
     for(const car of this.cars) {
       car.impactCooldown=Math.max(0,car.impactCooldown-dt);car.repairCooldown=Math.max(0,car.repairCooldown-dt);
       if(car.finished) {this.stopTransient(car,false);continue;}
@@ -184,7 +180,7 @@ export class Race {
       this.advance(car,dt);
       if(car.index>0) { car.stuckTime=car.speed<2?car.stuckTime+dt:0; if(car.stuckTime>5)this.repair(car); }
     }
-    this.collisions();
+    this.collisions();this.sceneryCollisions();
     if(this.cars.every(c=>c.finished)) {this.phase='finished';this.cars.forEach(c=>this.stopTransient(c,false));}
   }
 
@@ -201,10 +197,12 @@ export class Race {
     car.steer=smooth(car.steer,targetSteer,car.steerReversing?ARCADE.steerReverseRate:(turnIn?ARCADE.steerTurnInRate:16),dt);
     car.handbrake=!!input.handbrake;
     const contact=this.track.project(car.x,car.z,car.hint),off=contact.distance>HALF_WIDTH;
+    car.surface=off?(contact.distance>HALF_WIDTH+4?'dirt':'grass'):'asphalt';
     const velocitySpeed=Math.hypot(car.vx,car.vz);
     let longitudinal=Math.max(0, velocitySpeed);
     const weatherGrip=this.weather==='wet'?.66:1;
-    const baseGrip=car.model.grip*weatherGrip*(off?.47:1)*(1-car.damage.tires*.4);
+    const surfaceGrip=car.surface==='asphalt'?1:(car.surface==='grass'?.47:.40);
+    const baseGrip=car.model.grip*weatherGrip*surfaceGrip*(1-car.damage.tires*.4);
     const arcadeGrip=baseGrip*ARCADE.gripBoost;
     const downforce=1+Math.min(.30,longitudinal*longitudinal*.00007);
     const longitudinalTraction=baseGrip*9.81*downforce;
@@ -212,14 +210,8 @@ export class Race {
     const boostHeld=!!input.boost;
     const wasBoost=car.boostActive;
     car.boostActive=this.phase==='racing'&&boostHeld&&car.throttle>.2&&longitudinal>=4&&car.brake<.1&&!car.handbrake&&car.nitro>0;
-    if(car.boostActive) {
-      car.nitro=clamp(car.nitro-ARCADE.nitroDrain*dt,0,100);
-      if(car.nitro===0) {car.boostActive=false;car.nitroCooldown=ARCADE.nitroCooldown;}
-    } else {
-      if(wasBoost) car.nitroCooldown=Math.max(car.nitroCooldown,ARCADE.nitroCooldown);
-      if(car.nitroCooldown>0) car.nitroCooldown=Math.max(0,car.nitroCooldown-dt);
-      else if(!boostHeld&&car.nitro<100) car.nitro=clamp(car.nitro+ARCADE.nitroRefill*dt,0,100);
-    }
+    if(car.boostActive) {car.nitro=clamp(car.nitro-ARCADE.nitroDrain*dt,0,100);if(car.nitro===0) {car.boostActive=false;car.nitroCooldown=ARCADE.nitroCooldown;}}
+    else {if(wasBoost) car.nitroCooldown=Math.max(car.nitroCooldown,ARCADE.nitroCooldown);if(car.nitroCooldown>0) car.nitroCooldown=Math.max(0,car.nitroCooldown-dt);else if(!boostHeld&&car.nitro<100) car.nitro=clamp(car.nitro+ARCADE.nitroRefill*dt,0,100);}
     const driveForce=car.model.acceleration*car.throttle*(1-car.damage.engine*.55)/(1+longitudinal*.018);
     const braking=car.brake*18;
     const boostAccel=car.boostActive?ARCADE.nitroAccel:0;
@@ -247,7 +239,7 @@ export class Race {
     const alignRate=arcadeGrip*(car.drifting?2.0:5.2);
     const travel=angle(currentTravel+angle(targetTravel-currentTravel)*(1-Math.exp(-alignRate*dt)));
     car.vx=Math.sin(travel)*longitudinal;car.vz=Math.cos(travel)*longitudinal;
-    car.x+=car.vx*dt;car.z+=car.vz*dt;car.speed=longitudinal;
+    car.x+=car.vx*dt;car.z+=car.vz*dt;car.speed=longitudinal;applyRoadPose(car);
     const limits=[0,14,25,38,52,67,90];
     if(car.gear<6&&longitudinal>limits[car.gear])car.gear++;
     if(car.gear>1&&longitudinal<limits[car.gear-1]-3)car.gear--;
@@ -255,36 +247,42 @@ export class Race {
   }
   advance(car,dt) {
     const p=this.track.project(car.x,car.z,car.hint),L=this.track.length;
-    const delta=mod(p.s-car.previousS+L/2,L)-L/2;
+    const rawDelta=mod(p.s-car.previousS+L/2,L)-L/2;
+    const jump=Math.abs(rawDelta)>Math.max(12,car.speed*dt*4+4);
     car.hint=p.index;car.previousS=p.s;
-    if(Math.abs(delta)>Math.max(12,car.speed*dt*4+4)) {this.repair(car,'skip');return;}
-    const before=car.progress;car.progress+=delta;
+    const before=car.progress;car.progress+=rawDelta;
+    if(jump) this.invalidate(car);
     if(p.distance>BARRIER-1.2) {
       const sign=p.lateral>=0?1:-1,nx=Math.cos(p.heading)*sign,nz=-Math.sin(p.heading)*sign;
       const outward=car.vx*nx+car.vz*nz;
       car.x=p.x+nx*(BARRIER-1.3);car.z=p.z+nz*(BARRIER-1.3);
       if(outward>0) {car.vx-=nx*outward*1.2;car.vz-=nz*outward*1.2;this.hit(car,outward);} 
+      applyRoadPose(car);
     }
     if(p.distance>HALF_WIDTH+1) {
       if(car.offTime===0)car.offStart=car.progress;
       car.offTime+=dt;
       if(!car.offPenalized&&car.offTime>.6&&car.progress-car.offStart>8) {this.penalty(car,PENALTIES.cut,'Track limits');car.offPenalized=true;}
     } else {car.offTime=0;car.offPenalized=false;}
-    const gate=car.nextGate*this.track.gateSize;
-    if(before<gate&&car.progress>=gate) {
-      if(p.distance>HALF_WIDTH+1.5) {this.repair(car,'skip');return;}
-      if(car.nextGate%this.track.gates===0) {
-        if(car.lapStart!==null) {
-          const lapTime=this.time-car.lapStart;
-          car.lapTimes.push({time:lapTime,valid:car.lapValid});
-          if(car.lapValid) car.bestLap=car.bestLap===null?lapTime:Math.min(car.bestLap,lapTime);
-          if(car.lapTimes.length===LAPS) {car.finished=true;car.finishTime=this.time;car.vx=0;car.vz=0;car.speed=0;this.stopTransient(car,false);this.firstFinish??=this.time;}
-        }
-        car.lapStart=this.time;car.lapValid=true;car.lap=Math.min(LAPS,car.lapTimes.length+1);
+    if(rawDelta<=0) return;
+    const first=Math.floor(before/this.track.gateSize)+1;
+    const last=Math.floor(car.progress/this.track.gateSize);
+    for(let gate=first;gate<=last;gate++) this.crossGate(car,gate,p.distance>HALF_WIDTH+1.5||jump);
+  }
+  crossGate(car,gate,invalid) {
+    if(gate<car.nextGate) return;
+    if(gate>car.nextGate) invalid=true;
+    if(invalid) this.invalidate(car);
+    if(gate%this.track.gates===0) {
+      if(car.lapStart!==null) {
+        const lapTime=this.time-car.lapStart;
+        car.lapTimes.push({time:lapTime,valid:car.lapValid});
+        if(car.lapValid) car.bestLap=car.bestLap===null?lapTime:Math.min(car.bestLap,lapTime);
+        if(car.lapTimes.length===LAPS) {car.finished=true;car.finishTime=this.time;car.vx=0;car.vz=0;car.speed=0;this.stopTransient(car,false);this.firstFinish??=this.time;}
       }
-      car.nextGate++;
+      car.lapStart=this.time;car.lapValid=true;car.lap=Math.min(LAPS,car.lapTimes.length+1);
     }
-    if(car.progress>car.nextGate*this.track.gateSize+4) this.repair(car,'skip');
+    car.nextGate=gate+1;
   }
 
   hit(car,severity) {
@@ -299,9 +297,42 @@ export class Race {
       const a=this.cars[i],b=this.cars[j];if(a.finished||b.finished)continue;
       const dx=b.x-a.x,dz=b.z-a.z,d=Math.hypot(dx,dz);if(d>=3.8)continue;
       const nx=d>.001?dx/d:1,nz=d>.001?dz/d:0,overlap=(3.8-d)/2;
-      a.x-=nx*overlap;a.z-=nz*overlap;b.x+=nx*overlap;b.z+=nz*overlap;
+      a.x-=nx*overlap;a.z-=nz*overlap;b.x+=nx*overlap;b.z+=nz*overlap;applyRoadPose(a);applyRoadPose(b);
       const closing=(a.vx-b.vx)*nx+(a.vz-b.vz)*nz;
       if(closing>0) {const impulse=closing*.58;a.vx-=nx*impulse;a.vz-=nz*impulse;b.vx+=nx*impulse;b.vz+=nz*impulse;this.hit(a,closing);this.hit(b,closing);}
+    }
+  }
+  nearSolid(x,z,r=0){return this.layout.trees.some(t=>Math.hypot(x-t.x,z-t.z)<r+t.radius)||this.layout.walls.some(w=>Math.hypot(x-w.x,z-w.z)<r+w.length*.5);}
+  updateProps(dt){
+    const pad=80,b=this.track.bounds;
+    for(const p of this.props){
+      p.x=clamp(p.x+p.vx*dt,b.minX-pad,b.maxX+pad);p.z=clamp(p.z+p.vz*dt,b.minZ-pad,b.maxZ+pad);
+      p.vx*=Math.exp(-4*dt);p.vz*=Math.exp(-4*dt);p.tilt*=Math.exp(-2.2*dt);p.y=roadPose(p.x,p.z,p.yaw).y;
+      if(Math.hypot(p.vx,p.vz)<.03){p.vx=0;p.vz=0;}
+    }
+  }
+  collideCircle(car,x,z,r,scale=1){
+    const dx=car.x-x,dz=car.z-z,d=Math.hypot(dx,dz),min=carRadius+r;if(d>=min)return false;
+    const nx=d>.001?dx/d:Math.sin(car.yaw),nz=d>.001?dz/d:Math.cos(car.yaw),over=min-d;
+    car.x+=nx*over;car.z+=nz*over;const inward=car.vx*nx+car.vz*nz;
+    if(inward<0){car.vx-=nx*inward*1.35*scale;car.vz-=nz*inward*1.35*scale;this.hit(car,-inward*scale);}applyRoadPose(car);return true;
+  }
+  collideWall(car,w){
+    const c=Math.cos(w.yaw),s=Math.sin(w.yaw),dx=car.x-w.x,dz=car.z-w.z,lx=dx*s+dz*c,lz=dx*c-dz*s,hx=w.length/2,hz=w.width/2;
+    const qx=clamp(lx,-hx,hx),qz=clamp(lz,-hz,hz),ex=lx-qx,ez=lz-qz,d=Math.hypot(ex,ez);if(d>=carRadius)return false;
+    let nx=0,nz=0;if(d>.001){nx=ex/d;nz=ez/d;}else if(hx-Math.abs(lx)<hz-Math.abs(lz)){nx=Math.sign(lx)||1;}else nz=Math.sign(lz)||1;
+    const wx=nx*s+nz*c,wz=nx*c-nz*s,over=carRadius-d;car.x+=wx*over;car.z+=wz*over;const inward=car.vx*wx+car.vz*wz;
+    if(inward<0){car.vx-=wx*inward*1.45;car.vz-=wz*inward*1.45;this.hit(car,-inward*1.2);}applyRoadPose(car);return true;
+  }
+  sceneryCollisions(){
+    for(const car of this.cars){if(car.finished)continue;
+      for(const t of this.layout.trees) if(Math.hypot(car.x-t.x,car.z-t.z)<carRadius+t.radius+.5) this.collideCircle(car,t.x,t.z,t.radius,1.3);
+      for(const w of this.layout.walls) if(Math.hypot(car.x-w.x,car.z-w.z)<carRadius+w.length*.6) this.collideWall(car,w);
+      for(const p of this.props){
+        if(Math.hypot(car.x-p.x,car.z-p.z)>=carRadius+p.radius)continue;
+        const beforeSpeed=Math.hypot(car.vx,car.vz);const dx=car.x-p.x,dz=car.z-p.z,d=Math.hypot(dx,dz)||1,nx=dx/d,nz=dz/d;
+        if(this.collideCircle(car,p.x,p.z,p.radius,.45)&&beforeSpeed>3){p.vx-=nx*beforeSpeed*.42;p.vz-=nz*beforeSpeed*.42;p.tilt=clamp(p.tilt+beforeSpeed*.08,0,1.2);p.yaw=angle(p.yaw+(nx*p.vz-nz*p.vx)*.02);p.active=true;}
+      }
     }
   }
   standings() {

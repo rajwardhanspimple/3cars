@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {CIRCUIT,trackBounds} from '../src/circuit.js';
 import {Race,makeTrack,CARS,HALF_WIDTH,BARRIER} from '../src/sim.js';
+import {mountainLayout,roadPose} from '../src/mountain-layout.js';
 
 const orient=(a,b,c)=>Math.sign((b.x-a.x)*(c.z-a.z)-(b.z-a.z)*(c.x-a.x));
 const intersects=(a,b,c,d)=>{
@@ -35,6 +36,12 @@ test('Sakura Valley centerline has no self-crossing or degenerate corridor sampl
  }
 });
 
+test('mountain layout exposes deterministic render-matched scenery transforms',()=>{
+ const t=makeTrack(),a=mountainLayout(t),b=mountainLayout(t);
+ assert.deepEqual(a,b);assert.ok(a.trees.length>80);assert.ok(a.props.length>10);assert.ok(a.walls.length>10);
+ for(const item of [...a.trees,...a.props,...a.walls]){const pose=roadPose(item.x,item.z,item.yaw);assert.equal(item.y,pose.y);assert.ok(Number.isFinite(item.yaw));}
+});
+
 test('manual player never gets automatic handbrake drift',()=>{
  const r=new Race();r.phase='racing';const c=place(r,r.player,r.track.length*.18,0,24);
  for(let i=0;i<180;i++){r.step(1/120,{throttle:.7,steer:.65,boost:false});assert.equal(c.handbrake,false);}
@@ -48,10 +55,11 @@ test('AI refuses handbrake drift on straights and near track limits',()=>{
  place(r,car,straight,0,30);assert.equal(r.ai(car,1/120).handbrake,false);
  const edge=place(r,car,r.track.length*.2,HALF_WIDTH-.2,24);assert.equal(r.ai(edge,1/120).handbrake,false);
  const barrier=place(r,car,r.track.length*.2,BARRIER-1,24);assert.equal(r.ai(barrier,1/120).handbrake,false);
+ const tree=r.layout.trees[0];car.x=tree.x+2;car.z=tree.z;assert.equal(r.ai(car,1/120).handbrake,false);
 });
 
 test('race simulation keeps car state finite in dry and wet scenic races',()=>{
- for(const weather of ['dry','wet']){const r=new Race({weather});r.start();for(let i=0;i<120*90;i++){r.step(1/120,r.ai(r.player,1/120));for(const c of r.cars){assert.ok(Number.isFinite(c.x)&&Number.isFinite(c.z)&&Number.isFinite(c.yaw)&&Number.isFinite(c.speed)&&Number.isFinite(c.progress));assert.ok(r.track.project(c.x,c.z,c.hint).distance<=BARRIER+.5,`${weather} ${c.name} outside barrier`);}}}
+ for(const weather of ['dry','wet']){const r=new Race({weather});r.start();for(let i=0;i<120*90;i++){r.step(1/120,r.ai(r.player,1/120));for(const c of r.cars){assert.ok(Number.isFinite(c.x)&&Number.isFinite(c.z)&&Number.isFinite(c.yaw)&&Number.isFinite(c.speed)&&Number.isFinite(c.progress));assert.ok(r.track.project(c.x,c.z,c.hint).distance<=BARRIER+.5,`${weather} ${c.name} outside barrier`);assert.ok(Number.isFinite(c.y)&&Number.isFinite(c.pitch)&&Number.isFinite(c.roll));}}}
 });
 
 test('AI uses bounded handbrake drifts during full dry and wet races without stopping completion',{timeout:120000},()=>{

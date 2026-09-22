@@ -1,6 +1,7 @@
 import { buildMountainWorld } from './mountain-world.js';
 import { buildCityWorld } from './city-world.js';
 import { expandCityDistrict, auditCityDistrict } from './city-district.js';
+import { installCityLife } from './city-life-view.js';
 import { applyCelShading, registerCelPalette } from './cel-shading.js';
 import { installCelSurfaceDetails } from './cel-surface-details.js';
 import { installNightSkyline, NIGHT_SKYLINE } from './night-skyline.js';
@@ -19,9 +20,6 @@ export function applyDaytimeCel(view) {
  installCelSurfaceDetails(view);
  return view.celShading;
 }
-
-// Apply after city readiness so its original preset cannot restore night sun.
-// Ground uses hemispheric fill and compact pools tied to visible lamp emitters.
 export function applyNighttimeCel(view) {
  registerCelPalette('city-night', {
   shadowColor:'#6865a8', rimColor:'#8cdfff', fogColor:'#151b50',
@@ -47,13 +45,10 @@ export function applyNighttimeCel(view) {
  installNightSkyline(view);
  return view.celShading;
 }
-
 export function buildSelectedWorld(view) {
  if (view.scenery) throw new Error('A scene can contain only one world. Replace the view to switch tracks.');
  const track = trackInfo(view.trackId);
  const builder = track.id === MOUNTAIN_TRACK ? buildMountainWorld : buildCityWorld;
- // Preserve the sync builder API, but route sync failures through the same
- // loading promise as texture/asset failures. Never resolve a failed world.
  try {
   builder(view);
   const original = view.scenery.ready;
@@ -64,7 +59,7 @@ export function buildSelectedWorld(view) {
    const district = city ? expandCityDistrict(view) : null;
    orientGroundSurfaces(view.scene);
    if (!city) applyDaytimeCel(view);
-   else { applyNighttimeCel(view); district.finish(); auditCityDistrict(view); view.scene.metadata.scenery.ready = true; }
+   else { applyNighttimeCel(view); district.finish(); auditCityDistrict(view); installCityLife(view); view.scene.metadata.scenery.ready = true; }
    view.scene.metadata = { ...view.scene.metadata, selectedTrack: { id: track.id, name: track.name } };
    return result;
   }).catch(error => {

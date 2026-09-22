@@ -1,11 +1,9 @@
 import { trackInfo } from './tracks.js';
-
-// A track/quality change owns a NEW scene and engine. Dispose before allocation,
-// not after readiness, so two full Mustang fleets never overlap in GPU memory.
-// Same-track resets retain the existing fleet and the view's normal reset path.
+// A mode/population change also recreates the scene, so instance pools and
+// collision manifests always match the worker's configuration.
 export function prepareRaceView(previous, View, canvas, race, config) {
  const trackId = trackInfo(config.trackId).id;
- if (!previous || previous.trackId !== trackId || previous.quality !== config.quality) {
+ if (!previous || previous.trackId !== trackId || previous.quality !== config.quality || previous.race?.mode !== race.mode || previous.race?.density !== race.density) {
   previous?.dispose();
   const view = new View(canvas, race, { ...config, trackId });
   return { view, ready: view.ready };

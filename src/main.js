@@ -13,28 +13,32 @@ export const formatTime=seconds=>{if(seconds===null||!Number.isFinite(seconds))r
 const text=(id,value)=>{const node=ui[id];if(node&&node.textContent!==String(value))node.textContent=String(value);};
 const selected=()=>({carId:ui.setup.elements.carId.value,weather:ui.weather.value,quality:ui.quality.value,muted:settings.muted});
 const pressed=(...codes)=>codes.some(code=>keys.has(code))?1:0;
+const lapDisplay=p=>{if(p.finished)return 'Finished';if(p.lapStart===null)return 'Ready';const lapTime=formatTime(race.time-p.lapStart);return p.lapValid?lapTime:`${lapTime} (invalid)`;};
 function inputState(){return loading||race.phase==='paused'?{}:{throttle:pressed('KeyW','ArrowUp'),brake:pressed('KeyS','ArrowDown'),steer:pressed('KeyD','ArrowRight')-pressed('KeyA','ArrowLeft'),handbrake:!!pressed('Space'),boost:!!pressed('ShiftLeft','ShiftRight')};}
 function sendInput(){simulation?.input(inputState());}
 function clearInput(){keys.clear();simulation?.input({});}
-function storageStatus(){text('storage-status',records.available?'Settings, best laps, and the last 20 races stay in this browser.':'Browser storage is unavailable. This session will not be saved.');}
+function storageStatus(){text('storage-status',records.available?'Settings, best laps, and the last 20 mountain preview races stay in this browser.':'Browser storage is unavailable. This session will not be saved.');}
 function persistSettings(){settings=selected();records.saveSettings(settings);storageStatus();}
+
 
 function setLoading(value,label='Loading car...'){loading=value;ui.setup.inert=value;ui.start.disabled=value;text('start',value?label:'Start five-lap race');document.body.dataset.loading=String(value);if(value)clearInput();}
 function renderHistory(){
  const rows=records.results();text('history-count',rows.length);ui['race-history'].replaceChildren();
- for(const row of rows){const li=document.createElement('li'),small=document.createElement('small');li.textContent=`P${row.position} / ${CARS.find(c=>c.id===row.carId)?.name} / ${formatTime(row.time+row.penalty)}`;small.textContent=`${new Date(row.finishedAt).toLocaleString()} / ${row.weather==='wet'?'Rain':'Dry'} / +${row.penalty}s`;li.append(small);ui['race-history'].append(li);}
- if(!rows.length){const li=document.createElement('li');li.textContent='Finish your first race to record a result.';ui['race-history'].append(li);}
+ for(const row of rows){const li=document.createElement('li'),small=document.createElement('small');li.textContent=`P${row.position} / ${CARS.find(c=>c.id===row.carId)?.name} / ${formatTime(row.time+row.penalty)}`;small.textContent=`${new Date(row.finishedAt).toLocaleString()} / ${row.weather==='wet'?'Wet':'Dry'} / +${row.penalty}s`;li.append(small);ui['race-history'].append(li);}
+ if(!rows.length){const li=document.createElement('li');li.textContent='Finish your first mountain preview race to record a result.';ui['race-history'].append(li);}
  const best=records.bestLap(settings.carId,settings.weather);text('saved-best',best===null?'No lap recorded':formatTime(best));storageStatus();
 }
 function applyMute(){audio.setMuted(settings.muted);text('mute',settings.muted?'Sound off':'Sound on');ui.mute.setAttribute('aria-pressed',String(settings.muted));}
 function applySnapshot(state){
  if(disposed||failed)return;
  for(const key of ['phase','time','countdown','firstFinish','pausedPhase'])race[key]=state[key];
+ if(Array.isArray(state.props))race.props=state.props;
  for(let i=0;i<race.cars.length;i++)Object.assign(race.cars[i],state.cars[i]);
  race.player=race.cars[0];
- if(view?.scene)view.scene.metadata={...view.scene.metadata,simulation:{phase:race.phase,time:race.time,steer:race.player.steer,nitro:race.player.nitro,boostActive:race.player.boostActive,drifting:race.player.drifting}};
+ if(view?.scene)view.scene.metadata={...view.scene.metadata,simulation:{phase:race.phase,time:race.time,steer:race.player.steer,nitro:race.player.nitro,boostActive:race.player.boostActive,drifting:race.player.drifting,props:race.props}};
  if(!loading){syncPhase();const now=performance.now();if(now-lastHUD>=66||race.phase==='paused'){updateHUD();lastHUD=now;}}
 }
+
 
 async function resetRace(start=false,focusTarget=null){
  if(disposed||failed||loading&&view)return;
@@ -59,6 +63,7 @@ function syncPhase(){
  if(race.phase==='paused')$('resume').focus();if(race.phase==='finished'){clearInput();finishRace();$('race-again').focus();}if(race.phase==='menu')renderHistory();
 }
 
+
 function finishRace(){
  const order=race.standings(),p=race.player,position=order.indexOf(p)+1;
  text('result-title',position===1?'You take the win.':'Race complete');text('result-summary',`P${position} of 3. ${LAPS} laps at ${CIRCUIT.name} in ${formatTime(p.finishTime+p.penalty)}.`);ui['result-list'].replaceChildren();
@@ -66,9 +71,10 @@ function finishRace(){
  if(!saved){saved=true;records.recordRace({carId:p.model.id,weather:race.weather,position,time:p.finishTime,penalty:p.penalty,bestLap:p.bestLap,finishedAt:new Date().toISOString()});renderHistory();}
 }
 
+
 function updateHUD(){
  const p=race.player,order=race.standings();ui.position.innerHTML=`${order.indexOf(p)+1} <small>/ 3</small>`;ui.lap.innerHTML=`${p.lap} <small>/ ${LAPS}</small>`;
- text('race-time',formatTime(p.finished?p.finishTime:race.time));text('current-lap',p.finished?'Finished':p.lapStart===null?'Ready':formatTime(race.time-p.lapStart));text('best-lap',formatTime(p.bestLap));text('penalty',`+${p.penalty.toFixed(1)}s`);
+ text('race-time',formatTime(p.finished?p.finishTime:race.time));text('current-lap',lapDisplay(p));text('best-lap',formatTime(p.bestLap));text('penalty',`+${p.penalty.toFixed(1)}s`);
  text('speed',Math.round(p.speed*3.6));text('gear',p.gear);text('rpm',`${Math.round(p.rpm)} RPM`);ui['rpm-fill'].style.width=`${clamp(p.rpm/8500,0,1)*100}%`;
  for(const part of ['engine','steering','tires']){ui[`${part}-condition`].value=1-p.damage[part];ui[`${part}-condition`].title=`${Math.round((1-p.damage[part])*100)}% condition`;}
  ui.abs.classList.toggle('active',p.abs);ui.tc.classList.toggle('active',p.tc);text('conditions',race.weather==='wet'?'Wet track':'Dry track');
@@ -77,8 +83,10 @@ function updateHUD(){
  text('drift-status',p.drifting?'Drifting. Release Space to grip.':'Space: handbrake');document.body.dataset.boost=String(!!p.boostActive);document.body.dataset.drifting=String(!!p.drifting);
  text('notification',p.finished&&race.phase==='racing'?'Finished. Waiting for the other drivers.':p.noticeUntil>race.time?p.notification:'');ui.countdown.hidden=race.phase!=='countdown';if(race.phase==='countdown')text('countdown',Math.max(1,Math.ceil(race.countdown)));
  ui.standings.replaceChildren();
+
 for(const[i,c]of order.entries()){const li=document.createElement('li');if(c.index===0)li.className='you';const pos=document.createElement('span'),name=document.createElement('span'),gap=document.createElement('span');pos.textContent=i+1;name.textContent=c.name;gap.textContent=c.finished?formatTime(c.finishTime+c.penalty):i===0?'Leader':`~+${((order[0].progress-c.progress)/Math.max(10,c.speed)).toFixed(1)}s`;li.append(pos,name,gap);ui.standings.append(li);}drawMap();
 }
+
 
 const map=ui.minimap.getContext('2d');
 function drawMap(){
@@ -93,7 +101,8 @@ async function togglePause(){
  catch(error){if(!disposed)fail(error);}finally{pausePending=false;}
 }
 function fail(error){if(disposed||failed)return;failed=true;console.error(error);clearInput();simulation?.dispose();cancelAnimationFrame(frameId);setLoading(false);viewReady=false;ui.start.disabled=true;audio.setMuted(true);ui.menu.hidden=true;ui.hud.hidden=true;ui['pause-panel'].hidden=true;ui.results.hidden=true;ui.error.hidden=false;text('error-message',error.message||'Unable to run the game. Reload to try again.');document.body.dataset.phase='error';}
-ui.setup.elements.carId.value=settings.carId;ui.weather.value=settings.weather;ui.quality.value=settings.quality;applyMute();
+ui.setup.elements.carId.value=settings.carId;
+ui.weather.value=settings.weather;ui.quality.value=settings.quality;applyMute();
 try{simulation=new SimulationClient(applySnapshot,fail);document.body.dataset.worker='ready';}catch(error){fail(error);}
 if(!failed){syncPhase();renderHistory();resetRace();}
 ui.setup.addEventListener('change',()=>{if(loading||failed)return;const active=document.activeElement;persistSettings();resetRace(false,active);});
@@ -111,6 +120,7 @@ window.addEventListener('keydown',event=>{
 });
 window.addEventListener('keyup',event=>{if(keys.delete(event.code))sendInput();});
 function autoPause(){clearInput();if(loading){loadLostFocus=true;return;}if(!failed&&['countdown','racing'].includes(race.phase))simulation.command('pause').catch(error=>{if(!disposed)fail(error);});audio.update({phase:'paused',boostActive:false,drifting:false});}
+
 window.addEventListener('focus',()=>{windowFocused=true;last=performance.now();});window.addEventListener('blur',()=>{windowFocused=false;autoPause();});document.addEventListener('visibilitychange',()=>{if(document.hidden)autoPause();last=performance.now();});
 ui['race-canvas'].addEventListener('webglcontextlost',event=>{event.preventDefault();autoPause();fail(new Error('Graphics context was lost. Reload the game to continue.'));});
 

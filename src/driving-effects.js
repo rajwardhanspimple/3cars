@@ -1,6 +1,5 @@
 const B=globalThis.BABYLON;
 const clamp=(n,lo,hi)=>Math.max(lo,Math.min(hi,n));
-const v=(x=0,y=0,z=0)=>new B.Vector3(x,y,z);
 
 function makeSmokeTexture(scene){
  const size=128,texture=new B.DynamicTexture('drift-smoke-procedural',{width:size,height:size},scene,false),ctx=texture.getContext(),image=ctx.createImageData(size,size);
